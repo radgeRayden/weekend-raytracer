@@ -248,13 +248,6 @@ fn init ()
     'update tex buf
     ;
 
-struct Ray plain
-    origin    : vec3
-    direction : vec3
-
-    fn at (self t)
-        self.origin + (self.diretion * t)
-
 aspect-ratio    := FB_WIDTH / FB_HEIGHT
 viewport-height := 2.0
 viewport-width  := aspect-ratio * viewport-height
