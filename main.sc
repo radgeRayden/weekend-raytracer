@@ -266,10 +266,23 @@ vertical          := (vec3 0 viewport-height 0)
 lower-left-corner := origin - (horizontal / 2) - (vertical / 2) - (vec3 0 0 focal-length)
 run-stage;
 
+fn hit-sphere (center radius ray)
+    oc := ray.origin - center
+    a  := (dot ray.direction ray.direction)
+    b  := 2 * (dot oc ray.direction)
+    c  := (dot oc oc) - (pow radius 2)
+
+    discriminant := (pow b 2) - (4 * a * c)
+    discriminant > 0
+
 fn ray-color (r)
-    n := (normalize r.direction)
-    t := 0.5 * (n.y + 1)
-    mix (vec4 1) (vec4 0.5 0.7 1 1) t
+    if (hit-sphere (vec3 0 0 -1) 0.5 r)
+        vec4 1 0 0 1
+    else
+        n := (normalize r.direction)
+        t := 0.5 * (n.y + 1)
+        mix (vec4 1) (vec4 0.5 0.7 1 1) t
+
 fn color (uv)
     let r =
         Ray origin (lower-left-corner + ((vec3 uv 0) * (horizontal + vertical)) - origin)
