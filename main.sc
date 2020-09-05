@@ -276,8 +276,12 @@ fn hit-sphere (center radius ray)
     discriminant > 0
 
 fn ray-color (r)
-    if (hit-sphere (vec3 0 0 -1) 0.5 r)
-        vec4 1 0 0 1
+    let scenter = (vec3 0 0 -1)
+    t := (hit-sphere scenter 0.5 r)
+    if (t > 0)
+        let normal =
+            normalize (('at r t) - scenter)
+        vec4 (0.5 * (normal + (vec3 1))) 1
     else
         n := (normalize r.direction)
         t := 0.5 * (n.y + 1)
