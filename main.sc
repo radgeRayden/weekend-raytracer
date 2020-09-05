@@ -247,11 +247,14 @@ aspect-ratio    := FB_WIDTH / FB_HEIGHT
 viewport-height := 2.0
 viewport-width  := aspect-ratio * viewport-height
 focal-length    := 1.0
+origin          := (vec3)
 
-origin            := (vec3)
-horizontal        := (vec3 viewport-width 0 0)
-vertical          := (vec3 0 viewport-height 0)
-lower-left-corner := origin - (horizontal / 2) - (vertical / 2) - (vec3 0 0 focal-length)
+let viewport =
+    vec3 viewport-width viewport-height focal-length
+
+# -Z goes towards the screen; so this puts us at the lower left corner
+# of the projection plane.
+lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
 run-stage;
 
 struct Ray plain
@@ -290,7 +293,8 @@ fn ray-color (r)
 
 fn color (uv)
     let r =
-        Ray origin (lower-left-corner + ((vec3 uv 0) * (horizontal + vertical)) - origin)
+        # ray from origin (camera/eye) towards projection plane at remapped UV
+        Ray origin (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
     ray-color r
 
 fn update (dt)
@@ -299,7 +303,7 @@ fn update (dt)
     using import itertools
     using import glm
     for x y in (dim tex.width tex.height)
-        uv  := (vec2 x y) / (vec2 FB_WIDTH FB_HEIGHT)
+        uv  := (vec2 x y) / (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
         idx := y * FB_WIDTH + x
         buf @ idx =
             typeinit
