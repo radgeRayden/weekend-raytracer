@@ -266,6 +266,13 @@ vertical          := (vec3 0 viewport-height 0)
 lower-left-corner := origin - (horizontal / 2) - (vertical / 2) - (vec3 0 0 focal-length)
 run-stage;
 
+struct Ray plain
+    origin    : vec3
+    direction : vec3
+
+    fn at (self t)
+        self.origin + (self.direction * t)
+
 inline length2 (v)
     dot v v    
 
