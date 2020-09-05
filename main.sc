@@ -56,6 +56,7 @@ global state : (Option RenderingState)
 
 fn init ()
     HID.window.set-size FB_WIDTH FB_HEIGHT
+    HID.window.set-title "my little raytracer"
     gfx.set-clear-color (vec4 1)
 
     inline make-sampler (filter-mode)
@@ -240,12 +241,6 @@ fn init ()
     buf := ('force-unwrap state) . raytracing-buffer
     tex := ('force-unwrap state) . raytracing-target
     'resize buf ('capacity buf)
-    for p in buf
-        p.r = 0xff
-        p.g = 0x00
-        p.b = 0xff
-        p.a = 0xff
-    'update tex buf
     ;
 
 aspect-ratio    := FB_WIDTH / FB_HEIGHT
