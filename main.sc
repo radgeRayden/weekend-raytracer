@@ -248,11 +248,32 @@ fn init ()
     'update tex buf
     ;
 
+struct Ray plain
+    origin    : vec3
+    direction : vec3
+
+    fn at (self t)
+        self.origin + (self.diretion * t)
+
+aspect-ratio    := FB_WIDTH / FB_HEIGHT
+viewport-height := 2.0
+viewport-width  := aspect-ratio * viewport-height
+focal-length    := 1.0
+
+origin            := (vec3)
+horizontal        := (vec3 viewport-width 0 0)
+vertical          := (vec3 0 viewport-height 0)
+lower-left-corner := origin - (horizontal / 2) - (vertical / 2) - (vec3 0 0 focal-length)
+run-stage;
+
+fn ray-color (r)
+    n := (normalize r.direction)
+    t := 0.5 * (n.y + 1)
+    mix (vec4 1) (vec4 0.5 0.7 1 1) t
 fn color (uv)
-    if ((distance uv (vec2 0.5)) < 0.48)
-        vec4 1.0
-    else
-        vec4 uv.x uv.y 0.25 1
+    let r =
+        Ray origin (lower-left-corner + ((vec3 uv 0) * (horizontal + vertical)) - origin)
+    ray-color r
 
 fn update (dt)
     tex := ('force-unwrap state) . raytracing-target
