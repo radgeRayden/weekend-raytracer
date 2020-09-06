@@ -89,6 +89,10 @@ struct SphereH
 enum Hittable
     Sphere : SphereH
 
+    inline hit? (self ray tmin tmax)
+        'apply self
+            (T self) -> ('hit? self ray tmin tmax)
+
 HittableList := (Array Hittable)
 typedef+ HittableList
     fn hit? (self ray tmin tmax)
@@ -97,8 +101,7 @@ typedef+ HittableList
                 false tmax (undef HitRecord)) for obj in self
                 # we shrink max range every time we hit, to discard further objects
                 let hit? new-record =
-                    'apply obj
-                        (T obj) -> ('hit? obj ray tmin closest)
+                    'hit? obj ray tmin closest
                 if hit?
                     _ true new-record.t new-record
                 else
