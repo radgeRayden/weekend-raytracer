@@ -91,9 +91,9 @@ enum Hittable
 
     let __typecall = enum-class-constructor
 
-    inline hit? (self ray tmin tmax)
+    inline... hit? (self ray tmin tmax)
         'apply self
-            (T self) -> ('hit? self ray tmin tmax)
+            (T self) -> ('hit? self (va-tail *...))
 
 HittableList := (Array Hittable)
 typedef+ HittableList
