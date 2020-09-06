@@ -343,7 +343,6 @@ global scene : HittableList
         typeinit (center = (vec3 0 -100.5 -1)) (radius = 100)
 
 fn ray-color (r)
-    # let s = (SphereH (vec3 0 0 -1) 0.5)
     let hit? record = ('hit? scene r 0.0 Inf)
     if hit?
         normal := record.normal
