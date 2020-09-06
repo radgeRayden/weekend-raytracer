@@ -11,6 +11,7 @@ import app
 let gfx = (import gfx.webgpu.backend)
 let wgpu = (import gfx.webgpu.wrapper)
 import HID
+import PRNG
 
 FB_WIDTH  := 640:u32
 FB_HEIGHT := 480:u32
@@ -20,6 +21,7 @@ viewport-height := 2.0
 viewport-width  := aspect-ratio * viewport-height
 focal-length    := 1.0
 origin          := (vec3)
+rt-sample-count := 100
 
 let viewport =
     vec3 viewport-width viewport-height focal-length
@@ -116,6 +118,9 @@ global scene : HittableList
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
 
+# every run will have same results for now
+global rng : PRNG.random.Xoshiro256+ 0
+
 fn ray-color (r)
     let hit? record = ('hit? scene r 0.0 Inf)
     if hit?
@@ -127,10 +132,9 @@ fn ray-color (r)
         mix (vec4 1) (vec4 0.5 0.7 1 1) t
 
 fn color (uv)
-    let r =
-        # ray from origin (camera/eye) towards projection plane at remapped UV
+    # ray from origin (camera/eye) towards projection plane at remapped UV
+    ray-color
         Ray origin (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
-    ray-color r
 
 struct Pixel plain
     r : u8
@@ -367,13 +371,20 @@ fn init ()
         using import itertools
         using import glm
         for x y in (dim tex.width tex.height)
-            uv  := (vec2 x y) / (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+            vvv bind color-result
+            fold (color-result = (vec4)) for i in (range rt-sample-count)
+                let uv =
+                    /
+                        (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
+                        (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+                color-result + (color uv)
+
             idx := y * FB_WIDTH + x
             buf @ idx =
                 typeinit
                     va-map
                         (x) -> ((min (x * 255) 255:f32) as u8)
-                        unpack (color uv)
+                        unpack (color-result / rt-sample-count)
 
         'update tex buf
     ;
