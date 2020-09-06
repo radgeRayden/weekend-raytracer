@@ -327,7 +327,7 @@ typedef+ HittableList
                 # we shrink max range every time we hit, to discard further objects
                 let hit? new-record =
                     'apply obj
-                        (T self) -> ('hit? self ray tmin closest)
+                        (T obj) -> ('hit? obj ray tmin closest)
                 if hit?
                     _ true new-record.t new-record
                 else
