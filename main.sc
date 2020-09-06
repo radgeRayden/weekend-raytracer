@@ -271,6 +271,15 @@ struct HitRecord plain
     p      : vec3
     normal : vec3
     t      : f32
+    front? : bool
+
+    inline __typecall (cls ray t outward-normal)
+        front? := (dot ray.direction outward-normal) < 0
+        super-type.__typecall cls
+            p = ('at ray t)
+            front? = front?
+            normal = (? front? outward-normal -outward-normal)
+            t = t
 
 typedef Hittable < CStruct
     fn hit? ()
@@ -296,21 +305,15 @@ struct SphereH < Hittable
             t := (-hb - root) / a
             if ((t < tmax) and (t > tmin))
                 let at = ('at ray t)
-                return true
-                    HitRecord
-                        p      = at
-                        normal = ((at - self.center) / self.radius)
-                        t      = t
+                out-normal := (at - self.center) / self.radius
+                return true (HitRecord ray t out-normal)
 
             # second root
             t := (-hb + root) / a
             if ((t < tmax) and (t > tmin))
                 let at = ('at ray t)
-                return true
-                    HitRecord
-                        p      = at
-                        normal = ((at - self.center) / self.radius)
-                        t      = t
+                out-normal := (at - self.center) / self.radius
+                return true (HitRecord ray t out-normal)
             _ false (undef HitRecord)
         else
             _ false (undef HitRecord)
