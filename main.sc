@@ -257,6 +257,9 @@ let viewport =
 lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
 run-stage;
 
+inline length2 (v)
+    dot v v
+
 struct Ray plain
     origin    : vec3
     direction : vec3
@@ -264,27 +267,62 @@ struct Ray plain
     fn at (self t)
         self.origin + (self.direction * t)
 
-inline length2 (v)
-    dot v v    
+struct HitRecord plain
+    p      : vec3
+    normal : vec3
+    t      : f32
 
-fn hit-sphere (center radius ray)
-    oc := ray.origin - center
-    a  := (length2 ray.direction)
-    hb := (dot oc ray.direction)
-    c  := (length2 oc) - (pow radius 2)
+typedef Hittable < CStruct
+    fn hit? ()
+        static-error "not implemented for subtype"
 
-    discriminant := (pow hb 2) - (a * c)
-    if (discriminant < 0)
-        -1.0
-    else
-        (-hb - (sqrt discriminant)) / a
+struct SphereH < Hittable
+    center : vec3
+    radius : f32
+
+    fn hit? (self ray tmin tmax)
+        let center radius = self.center self.radius
+        oc := ray.origin - center
+        a  := (length2 ray.direction)
+        hb := (dot oc ray.direction)
+        c  := (length2 oc) - (pow radius 2)
+
+        discriminant := (pow hb 2) - (a * c)
+
+        if (discriminant > 0)
+            root := (sqrt discriminant)
+
+            # first root
+            t := (-hb - root) / a
+            if ((t < tmax) and (t > tmin))
+                let at = ('at ray t)
+                return true
+                    HitRecord
+                        p      = at
+                        normal = ((at - self.center) / self.radius)
+                        t      = t
+
+            # second root
+            t := (-hb + root) / a
+            if ((t < tmax) and (t > tmin))
+                let at = ('at ray t)
+                return true
+                    HitRecord
+                        p      = at
+                        normal = ((at - self.center) / self.radius)
+                        t      = t
+            _ false (undef HitRecord)
+        else
+            _ false (undef HitRecord)
 
 fn ray-color (r)
-    let scenter = (vec3 0 0 -1)
-    t := (hit-sphere scenter 0.5 r)
-    if (t > 0)
-        let normal =
-            normalize (('at r t) - scenter)
+    let sphere =
+        SphereH
+            center = (vec3 0 0 -1)
+            radius = 0.5
+    let hit? record = ('hit? sphere r -2.0 2.0)
+    if hit?
+        normal := record.normal
         vec4 (0.5 * (normal + (vec3 1))) 1
     else
         n := (normalize r.direction)
