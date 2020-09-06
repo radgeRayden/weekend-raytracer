@@ -383,7 +383,7 @@ fn init ()
             buf @ idx =
                 typeinit
                     va-map
-                        (x) -> ((min (x * 255) 255:f32) as u8)
+                        (x) -> ((clamp (x * 255) 0. 255.) as u8)
                         unpack (color-result / rt-sample-count)
 
         'update tex buf
