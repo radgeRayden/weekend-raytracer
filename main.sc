@@ -4,6 +4,7 @@ using import Option
 using import Array
 using import glm
 using import struct
+using import enum
 
 import .raydEngine.use
 import app
@@ -281,11 +282,7 @@ struct HitRecord plain
             normal = (? front? outward-normal -outward-normal)
             t = t
 
-typedef Hittable < CStruct
-    fn hit? ()
-        static-error "not implemented for subtype"
-
-struct SphereH < Hittable
+struct SphereH
     center : vec3
     radius : f32
 
@@ -318,12 +315,36 @@ struct SphereH < Hittable
         else
             _ false (undef HitRecord)
 
+enum Hittable
+    Sphere : SphereH
+
+HittableList := (Array Hittable)
+typedef+ HittableList
+    fn hit? (self ray tmin tmax)
+        let hit? closest record =
+            fold (any-hit? closest last-record =
+                false tmax (undef HitRecord)) for obj in self
+                # we shrink max range every time we hit, to discard further objects
+                let hit? new-record =
+                    'apply obj
+                        (T self) -> ('hit? self ray tmin closest)
+                if hit?
+                    _ true new-record.t new-record
+                else
+                    _ any-hit? closest last-record
+        _ hit? record
+
+global scene : HittableList
+'append scene
+    Hittable.Sphere
+        typeinit (center = (vec3 0 0 -1)) (radius = 0.5)
+'append scene
+    Hittable.Sphere
+        typeinit (center = (vec3 0 -100.5 -1)) (radius = 100)
+
 fn ray-color (r)
-    let sphere =
-        SphereH
-            center = (vec3 0 0 -1)
-            radius = 0.5
-    let hit? record = ('hit? sphere r -2.0 2.0)
+    # let s = (SphereH (vec3 0 0 -1) 0.5)
+    let hit? record = ('hit? scene r 0.0 Inf)
     if hit?
         normal := record.normal
         vec4 (0.5 * (normal + (vec3 1))) 1
