@@ -89,6 +89,8 @@ struct SphereH
 enum Hittable
     Sphere : SphereH
 
+    let __typecall = enum-class-constructor
+
     inline hit? (self ray tmin tmax)
         'apply self
             (T self) -> ('hit? self ray tmin tmax)
@@ -109,12 +111,10 @@ typedef+ HittableList
         _ hit? record
 
 global scene : HittableList
-'append scene
-    Hittable.Sphere
-        typeinit (center = (vec3 0 0 -1)) (radius = 0.5)
-'append scene
-    Hittable.Sphere
-        typeinit (center = (vec3 0 -100.5 -1)) (radius = 100)
+'emplace-append scene
+    SphereH (center = (vec3 0 0 -1)) (radius = 0.5)
+'emplace-append scene
+    SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
 
 fn ray-color (r)
     let hit? record = ('hit? scene r 0.0 Inf)
