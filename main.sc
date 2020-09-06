@@ -15,6 +15,120 @@ import HID
 FB_WIDTH  := 640:u32
 FB_HEIGHT := 480:u32
 
+aspect-ratio    := FB_WIDTH / FB_HEIGHT
+viewport-height := 2.0
+viewport-width  := aspect-ratio * viewport-height
+focal-length    := 1.0
+origin          := (vec3)
+
+let viewport =
+    vec3 viewport-width viewport-height focal-length
+
+# -Z goes towards the screen; so this puts us at the lower left corner
+# of the projection plane.
+lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
+run-stage;
+
+inline length2 (v)
+    dot v v
+
+struct Ray plain
+    origin    : vec3
+    direction : vec3
+
+    fn at (self t)
+        self.origin + (self.direction * t)
+
+struct HitRecord plain
+    p      : vec3
+    normal : vec3
+    t      : f32
+    front? : bool
+
+    inline __typecall (cls ray t outward-normal)
+        front? := (dot ray.direction outward-normal) < 0
+        super-type.__typecall cls
+            p = ('at ray t)
+            front? = front?
+            normal = (? front? outward-normal -outward-normal)
+            t = t
+
+struct SphereH
+    center : vec3
+    radius : f32
+
+    fn hit? (self ray tmin tmax)
+        let center radius = self.center self.radius
+        oc := ray.origin - center
+        a  := (length2 ray.direction)
+        hb := (dot oc ray.direction)
+        c  := (length2 oc) - (pow radius 2)
+
+        discriminant := (pow hb 2) - (a * c)
+
+        if (discriminant > 0)
+            root := (sqrt discriminant)
+
+            # first root
+            t := (-hb - root) / a
+            if ((t < tmax) and (t > tmin))
+                let at = ('at ray t)
+                out-normal := (at - self.center) / self.radius
+                return true (HitRecord ray t out-normal)
+
+            # second root
+            t := (-hb + root) / a
+            if ((t < tmax) and (t > tmin))
+                let at = ('at ray t)
+                out-normal := (at - self.center) / self.radius
+                return true (HitRecord ray t out-normal)
+            _ false (undef HitRecord)
+        else
+            _ false (undef HitRecord)
+
+enum Hittable
+    Sphere : SphereH
+
+HittableList := (Array Hittable)
+typedef+ HittableList
+    fn hit? (self ray tmin tmax)
+        let hit? closest record =
+            fold (any-hit? closest last-record =
+                false tmax (undef HitRecord)) for obj in self
+                # we shrink max range every time we hit, to discard further objects
+                let hit? new-record =
+                    'apply obj
+                        (T obj) -> ('hit? obj ray tmin closest)
+                if hit?
+                    _ true new-record.t new-record
+                else
+                    _ any-hit? closest last-record
+        _ hit? record
+
+global scene : HittableList
+'append scene
+    Hittable.Sphere
+        typeinit (center = (vec3 0 0 -1)) (radius = 0.5)
+'append scene
+    Hittable.Sphere
+        typeinit (center = (vec3 0 -100.5 -1)) (radius = 100)
+
+fn ray-color (r)
+    let hit? record = ('hit? scene r 0.0 Inf)
+    if hit?
+        normal := record.normal
+        vec4 (0.5 * (normal + (vec3 1))) 1
+    else
+        n := (normalize r.direction)
+        t := 0.5 * (n.y + 1)
+        mix (vec4 1) (vec4 0.5 0.7 1 1) t
+
+fn color (uv)
+    let r =
+        # ray from origin (camera/eye) towards projection plane at remapped UV
+        Ray origin (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
+    ray-color r
+
 struct Pixel plain
     r : u8
     g : u8
@@ -242,137 +356,26 @@ fn init ()
     buf := ('force-unwrap state) . raytracing-buffer
     tex := ('force-unwrap state) . raytracing-target
     'resize buf ('capacity buf)
+
+    # generate the image
+    do
+        tex := ('force-unwrap state) . raytracing-target
+        buf := ('force-unwrap state) . raytracing-buffer
+        using import itertools
+        using import glm
+        for x y in (dim tex.width tex.height)
+            uv  := (vec2 x y) / (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+            idx := y * FB_WIDTH + x
+            buf @ idx =
+                typeinit
+                    va-map
+                        (x) -> ((min (x * 255) 255:f32) as u8)
+                        unpack (color uv)
+
+        'update tex buf
     ;
 
-aspect-ratio    := FB_WIDTH / FB_HEIGHT
-viewport-height := 2.0
-viewport-width  := aspect-ratio * viewport-height
-focal-length    := 1.0
-origin          := (vec3)
-
-let viewport =
-    vec3 viewport-width viewport-height focal-length
-
-# -Z goes towards the screen; so this puts us at the lower left corner
-# of the projection plane.
-lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
-run-stage;
-
-inline length2 (v)
-    dot v v
-
-struct Ray plain
-    origin    : vec3
-    direction : vec3
-
-    fn at (self t)
-        self.origin + (self.direction * t)
-
-struct HitRecord plain
-    p      : vec3
-    normal : vec3
-    t      : f32
-    front? : bool
-
-    inline __typecall (cls ray t outward-normal)
-        front? := (dot ray.direction outward-normal) < 0
-        super-type.__typecall cls
-            p = ('at ray t)
-            front? = front?
-            normal = (? front? outward-normal -outward-normal)
-            t = t
-
-struct SphereH
-    center : vec3
-    radius : f32
-
-    fn hit? (self ray tmin tmax)
-        let center radius = self.center self.radius
-        oc := ray.origin - center
-        a  := (length2 ray.direction)
-        hb := (dot oc ray.direction)
-        c  := (length2 oc) - (pow radius 2)
-
-        discriminant := (pow hb 2) - (a * c)
-
-        if (discriminant > 0)
-            root := (sqrt discriminant)
-
-            # first root
-            t := (-hb - root) / a
-            if ((t < tmax) and (t > tmin))
-                let at = ('at ray t)
-                out-normal := (at - self.center) / self.radius
-                return true (HitRecord ray t out-normal)
-
-            # second root
-            t := (-hb + root) / a
-            if ((t < tmax) and (t > tmin))
-                let at = ('at ray t)
-                out-normal := (at - self.center) / self.radius
-                return true (HitRecord ray t out-normal)
-            _ false (undef HitRecord)
-        else
-            _ false (undef HitRecord)
-
-enum Hittable
-    Sphere : SphereH
-
-HittableList := (Array Hittable)
-typedef+ HittableList
-    fn hit? (self ray tmin tmax)
-        let hit? closest record =
-            fold (any-hit? closest last-record =
-                false tmax (undef HitRecord)) for obj in self
-                # we shrink max range every time we hit, to discard further objects
-                let hit? new-record =
-                    'apply obj
-                        (T obj) -> ('hit? obj ray tmin closest)
-                if hit?
-                    _ true new-record.t new-record
-                else
-                    _ any-hit? closest last-record
-        _ hit? record
-
-global scene : HittableList
-'append scene
-    Hittable.Sphere
-        typeinit (center = (vec3 0 0 -1)) (radius = 0.5)
-'append scene
-    Hittable.Sphere
-        typeinit (center = (vec3 0 -100.5 -1)) (radius = 100)
-
-fn ray-color (r)
-    let hit? record = ('hit? scene r 0.0 Inf)
-    if hit?
-        normal := record.normal
-        vec4 (0.5 * (normal + (vec3 1))) 1
-    else
-        n := (normalize r.direction)
-        t := 0.5 * (n.y + 1)
-        mix (vec4 1) (vec4 0.5 0.7 1 1) t
-
-fn color (uv)
-    let r =
-        # ray from origin (camera/eye) towards projection plane at remapped UV
-        Ray origin (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
-    ray-color r
-
 fn update (dt)
-    tex := ('force-unwrap state) . raytracing-target
-    buf := ('force-unwrap state) . raytracing-buffer
-    using import itertools
-    using import glm
-    for x y in (dim tex.width tex.height)
-        uv  := (vec2 x y) / (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
-        idx := y * FB_WIDTH + x
-        buf @ idx =
-            typeinit
-                va-map
-                    (x) -> ((min (x * 255) 255:f32) as u8)
-                    unpack (color uv)
-
-    'update tex buf
     ;
 
 fn draw (cmd-encoder render-pass)
