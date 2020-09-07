@@ -393,11 +393,12 @@ fn init ()
                 color-result + (color uv)
 
             idx := y * FB_WIDTH + x
+            scale := 1.0 / rt-sample-count
             buf @ idx =
                 typeinit
                     va-map
                         (x) -> ((clamp (x * 255) 0. 255.) as u8)
-                        unpack (color-result / rt-sample-count)
+                        unpack (sqrt (color-result * scale))
 
         'update tex buf
     ;
