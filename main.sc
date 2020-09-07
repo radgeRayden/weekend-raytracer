@@ -34,6 +34,16 @@ run-stage;
 inline length2 (v)
     dot v v
 
+fn random-in-unit-sphere (rng)
+    loop ()
+        let p =
+            vec3
+                ('normalized rng)
+                ('normalized rng)
+                ('normalized rng)
+        if ((length2 p) < 1)
+            break p
+
 struct Ray plain
     origin    : vec3
     direction : vec3
@@ -120,21 +130,24 @@ global scene : HittableList
 
 # every run will have same results for now
 global rng : PRNG.random.Xoshiro256+ 0
+fn ray-color (r depth)
+    if (depth >= unroll-limit)
+        return (vec3)
 
-fn ray-color (r)
-    let hit? record = ('hit? scene r 0.0 Inf)
+    let hit? record = ('hit? scene r 0.001 Inf)
     if hit?
-        normal := record.normal
-        vec4 (0.5 * (normal + (vec3 1))) 1
+        let p n = record.p record.normal
+        bounce-target := p + n + (random-in-unit-sphere rng)
+        0.5 * (this-function (Ray p (bounce-target - p)) (depth + 1))
     else
         n := (normalize r.direction)
         t := 0.5 * (n.y + 1)
-        mix (vec4 1) (vec4 0.5 0.7 1 1) t
+        mix (vec3 1) (vec3 0.5 0.7 1) t
 
 fn color (uv)
     # ray from origin (camera/eye) towards projection plane at remapped UV
-    ray-color
-        Ray origin (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
+    dir := (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
+    vec4 (ray-color (Ray origin dir) 0) 1
 
 struct Pixel plain
     r : u8
