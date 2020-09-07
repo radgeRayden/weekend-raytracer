@@ -38,9 +38,9 @@ fn random-in-unit-sphere (rng)
     loop ()
         let p =
             vec3
-                ('normalized rng)
-                ('normalized rng)
-                ('normalized rng)
+                (('normalized rng) * 2) - 1.0
+                (('normalized rng) * 2) - 1.0
+                (('normalized rng) * 2) - 1.0
         if ((length2 p) < 1)
             break p
 
