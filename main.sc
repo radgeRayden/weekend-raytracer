@@ -155,6 +155,15 @@ struct Pixel plain
     b : u8
     a : u8
 
+    inline __+ (lhs rhs)
+        static-if (imply? lhs rhs)
+            inline (self other)
+                this-type
+                    self.r + other.r
+                    self.g + other.g
+                    self.b + other.b
+                    self.a + other.a
+
 struct Texture
     id : wgpu.TextureId
     view : wgpu.TextureViewId
