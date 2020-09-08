@@ -13,17 +13,17 @@ let wgpu = (import gfx.webgpu.wrapper)
 import HID
 import PRNG
 
-FB_WIDTH     := 640:u32
-FB_HEIGHT    := 480:u32
+FB_WIDTH        := 640:u32
+FB_HEIGHT       := 480:u32
 # change this to average the scene over time
-TOTAL_FRAMES := 1
+TOTAL_FRAMES    := 1
+RT_SAMPLE_COUNT := 100
 
 aspect-ratio    := FB_WIDTH / FB_HEIGHT
 viewport-height := 2.0
 viewport-width  := aspect-ratio * viewport-height
 focal-length    := 1.0
 origin          := (vec3)
-rt-sample-count := 100
 
 let viewport =
     vec3 viewport-width viewport-height focal-length
@@ -406,7 +406,7 @@ fn update (dt)
     update-scene (frame-counter / TOTAL_FRAMES)
 
     # generate the image and average with previous frames
-    scale := 1.0 / rt-sample-count
+    scale := 1.0 / RT_SAMPLE_COUNT
 
     using import itertools
     using import glm
@@ -415,7 +415,7 @@ fn update (dt)
 
     for x y in (dim tex.width tex.height)
         vvv bind color-result
-        fold (color-result = (vec4)) for i in (range rt-sample-count)
+        fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
             let uv =
                 /
                     (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
