@@ -393,7 +393,7 @@ global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
 'resize color-buffer ('capacity color-buffer)
 
 fn update-scene (t)
-    let y = (mix 0.0 0.2 (t ** 7))
+    let y = (mix 0.0 0.2 (t ** (1 - t)))
     'apply (scene @ 0)
         (T s) -> (s.center = (vec3 0 y -1))
     ;
