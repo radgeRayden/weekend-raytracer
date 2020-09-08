@@ -13,8 +13,10 @@ let wgpu = (import gfx.webgpu.wrapper)
 import HID
 import PRNG
 
-FB_WIDTH  := 640:u32
-FB_HEIGHT := 480:u32
+FB_WIDTH     := 640:u32
+FB_HEIGHT    := 480:u32
+# change this to average the scene over time
+TOTAL_FRAMES := 1
 
 aspect-ratio    := FB_WIDTH / FB_HEIGHT
 viewport-height := 2.0
@@ -385,34 +387,62 @@ fn init ()
     buf := ('force-unwrap state) . raytracing-buffer
     tex := ('force-unwrap state) . raytracing-target
     'resize buf ('capacity buf)
+    ;
 
-    # generate the image
-    do
-        tex := ('force-unwrap state) . raytracing-target
-        buf := ('force-unwrap state) . raytracing-buffer
-        using import itertools
-        using import glm
-        for x y in (dim tex.width tex.height)
-            vvv bind color-result
-            fold (color-result = (vec4)) for i in (range rt-sample-count)
-                let uv =
-                    /
-                        (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
-                        (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
-                color-result + (color uv)
+global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
+'resize color-buffer ('capacity color-buffer)
 
-            idx := y * FB_WIDTH + x
-            scale := 1.0 / rt-sample-count
-            buf @ idx =
-                typeinit
-                    va-map
-                        (x) -> ((clamp (x * 255) 0. 255.) as u8)
-                        unpack (sqrt (color-result * scale))
-
-        'update tex buf
+fn update-scene (t)
+    let y = (mix 0.0 0.2 (t ** 7))
+    'apply (scene @ 0)
+        (T s) -> (s.center = (vec3 0 y -1))
     ;
 
 fn update (dt)
+    global frame-counter : i32 0
+    if (frame-counter >= TOTAL_FRAMES)
+        return;
+
+    update-scene (frame-counter / TOTAL_FRAMES)
+
+    # generate the image and average with previous frames
+    scale := 1.0 / rt-sample-count
+
+    using import itertools
+    using import glm
+
+    tex := ('force-unwrap state) . raytracing-target
+
+    for x y in (dim tex.width tex.height)
+        vvv bind color-result
+        fold (color-result = (vec4)) for i in (range rt-sample-count)
+            let uv =
+                /
+                    (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
+                    (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+            color-result + (color uv)
+
+        color-result := color-result * scale
+        idx := y * FB_WIDTH + x
+        pixel := color-buffer @ idx
+        frame-counter as:= f32
+        pixel = ((frame-counter * (color-buffer @ idx) + color-result) / (frame-counter + 1))
+
+    print "sample" (deref frame-counter) "done"
+    frame-counter += 1
+    if (frame-counter == TOTAL_FRAMES)
+        print "render done!"
+
+    # copy to texture
+    buf := ('force-unwrap state) . raytracing-buffer
+    for i in (range (countof color-buffer))
+        buf @ i =
+            typeinit
+                va-map
+                    (x) -> ((clamp (x * 255) 0. 255.) as u8)
+                    unpack (sqrt (color-buffer @ i))
+
+    'update tex buf
     ;
 
 fn draw (cmd-encoder render-pass)
