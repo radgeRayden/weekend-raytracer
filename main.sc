@@ -37,11 +37,10 @@ inline length2 (v)
     dot v v
 
 fn random-unit-vector (rng)
-    let a b =
-        ('normalized rng) * 2 * pi
-        ('normalized rng) * 2 * pi
-    let ca sa cb sb = (cos a) (sin a) (cos b) (sin b)
-    vec3 (ca * cb) sb (sa * cb)
+    a := ('normalized rng) * 2 * pi
+    z := (('normalized rng) * 2) - 1
+    r := (sqrt (1 - (* z z)))
+    vec3 (r * (cos a)) (r * (sin a)) z
 
 struct Ray plain
     origin    : vec3
