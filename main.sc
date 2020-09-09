@@ -36,15 +36,12 @@ run-stage;
 inline length2 (v)
     dot v v
 
-fn random-in-unit-sphere (rng)
-    loop ()
-        let p =
-            vec3
-                (('normalized rng) * 2) - 1.0
-                (('normalized rng) * 2) - 1.0
-                (('normalized rng) * 2) - 1.0
-        if ((length2 p) < 1)
-            break p
+fn random-unit-vector (rng)
+    let a b =
+        ('normalized rng) * 2 * pi
+        ('normalized rng) * 2 * pi
+    let ca sa cb sb = (cos a) (sin a) (cos b) (sin b)
+    vec3 (ca * cb) sb (sa * cb)
 
 struct Ray plain
     origin    : vec3
@@ -139,7 +136,7 @@ fn ray-color (r depth)
     let hit? record = ('hit? scene r 0.001 Inf)
     if hit?
         let p n = record.p record.normal
-        bounce-target := p + n + (random-in-unit-sphere rng)
+        bounce-target := p + n + (random-unit-vector rng)
         0.5 * (this-function (Ray p (bounce-target - p)) (depth + 1))
     else
         n := (normalize r.direction)
