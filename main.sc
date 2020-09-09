@@ -5,6 +5,7 @@ using import Array
 using import glm
 using import struct
 using import enum
+using import Rc
 
 import .raydEngine.use
 import app
@@ -49,23 +50,47 @@ struct Ray plain
     fn at (self t)
         self.origin + (self.direction * t)
 
-struct HitRecord plain
+struct LambertianM
+    albedo : vec4
+
+    fn scatter (self iray record)
+        scatter-dir := record.normal + (random-unit-vector)
+        scattered := (Ray record.p scatter-dir)
+        attenuation := self.albedo
+        _ true scattered attenuation
+       
+enum Material
+    Lambertian : LambertianM
+
+    let __typecall = enum-class-constructor
+
+    inline... scatter (self iray record attenuation)
+        returning bool Ray vec4
+        'apply self
+            (T self) -> ('scatter self (va-tail *...))
+
+struct HitRecord
     p      : vec3
     normal : vec3
     t      : f32
     front? : bool
+    mat    : (Rc Material)
 
-    inline __typecall (cls ray t outward-normal)
+    inline __typecall (cls ray t outward-normal material)
         front? := (dot ray.direction outward-normal) < 0
         super-type.__typecall cls
             p = ('at ray t)
             front? = front?
             normal = (? front? outward-normal -outward-normal)
+            mat = material
             t = t
+
+HitRecordOpt := (Option HitRecord)
 
 struct SphereH
     center : vec3
     radius : f32
+    mat    : (Rc Material)
 
     fn hit? (self ray tmin tmax)
         let center radius = self.center self.radius
@@ -84,17 +109,17 @@ struct SphereH
             if ((t < tmax) and (t > tmin))
                 let at = ('at ray t)
                 out-normal := (at - self.center) / self.radius
-                return true (HitRecord ray t out-normal)
+                return (HitRecordOpt (HitRecord ray t out-normal (copy self.mat)))
 
             # second root
             t := (-hb + root) / a
             if ((t < tmax) and (t > tmin))
                 let at = ('at ray t)
                 out-normal := (at - self.center) / self.radius
-                return true (HitRecord ray t out-normal)
-            _ false (undef HitRecord)
+                return (HitRecordOpt (HitRecord ray t out-normal (copy self.mat)))
+            _ (HitRecordOpt none)
         else
-            _ false (undef HitRecord)
+            _ (HitRecordOpt none)
 
 enum Hittable
     Sphere : SphereH
@@ -110,21 +135,24 @@ typedef+ HittableList
     fn hit? (self ray tmin tmax)
         let hit? closest record =
             fold (any-hit? closest last-record =
-                false tmax (undef HitRecord)) for obj in self
+                false tmax (HitRecordOpt none)) for obj in self
                 # we shrink max range every time we hit, to discard further objects
-                let hit? new-record =
+                let record =
                     'hit? obj ray tmin closest
-                if hit?
-                    _ true new-record.t new-record
+                try
+                    let new-record = ('unwrap record)
+                    _ true (copy new-record.t) record
                 else
                     _ any-hit? closest last-record
-        _ hit? record
+        _ record
 
 global scene : HittableList
 'emplace-append scene
     SphereH (center = (vec3 0 0 -1)) (radius = 0.5)
+        Rc.wrap (Material (LambertianM (albedo = (vec4 1 0 0 1))))
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
+        Rc.wrap (Material (LambertianM (albedo = (vec4 0 0 0 1))))
 
 # every run will have same results for now
 global rng : PRNG.random.Xoshiro256+ 0
@@ -132,8 +160,9 @@ fn ray-color (r depth)
     if (depth >= unroll-limit)
         return (vec3)
 
-    let hit? record = ('hit? scene r 0.001 Inf)
-    if hit?
+    let record = ('hit? scene r 0.001 Inf)
+    try
+        let record = ('unwrap record)
         let p n = record.p record.normal
         bounce-target := p + n + (random-unit-vector rng)
         0.5 * (this-function (Ray p (bounce-target - p)) (depth + 1))
