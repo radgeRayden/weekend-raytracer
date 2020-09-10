@@ -483,7 +483,6 @@ fn update (dt)
         frame-counter as:= f32
         pixel = ((frame-counter * (color-buffer @ idx) + color-result) / (frame-counter + 1))
 
-
     # copy to texture
     buf := ('force-unwrap state) . raytracing-buffer
     for i in (range (countof color-buffer))
@@ -493,7 +492,7 @@ fn update (dt)
                     (x) -> ((clamp (x * 255) 0. 255.) as u8)
                     unpack (sqrt (color-buffer @ i))
 
-    if (y >= FB_HEIGHT)
+    if (y >= (FB_HEIGHT - 1))
         print "sample" (deref frame-counter) "done"
         frame-counter += 1
         if (frame-counter == TOTAL_FRAMES)
