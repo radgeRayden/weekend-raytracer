@@ -427,6 +427,7 @@ fn update-scene (t)
 
 fn update (dt)
     global frame-counter : i32 0
+    global y : u32
     if (frame-counter >= TOTAL_FRAMES)
         return;
 
@@ -440,7 +441,7 @@ fn update (dt)
 
     tex := ('force-unwrap state) . raytracing-target
 
-    for x y in (dim tex.width tex.height)
+    for x in (range FB_WIDTH)
         vvv bind color-result
         fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
             let uv =
@@ -455,10 +456,6 @@ fn update (dt)
         frame-counter as:= f32
         pixel = ((frame-counter * (color-buffer @ idx) + color-result) / (frame-counter + 1))
 
-    print "sample" (deref frame-counter) "done"
-    frame-counter += 1
-    if (frame-counter == TOTAL_FRAMES)
-        print "render done!"
 
     # copy to texture
     buf := ('force-unwrap state) . raytracing-buffer
@@ -468,6 +465,15 @@ fn update (dt)
                 va-map
                     (x) -> ((clamp (x * 255) 0. 255.) as u8)
                     unpack (sqrt (color-buffer @ i))
+
+    if (y >= FB_HEIGHT)
+        print "sample" (deref frame-counter) "done"
+        frame-counter += 1
+        if (frame-counter == TOTAL_FRAMES)
+            print "render done!"
+        y = 0
+    else
+        y += 1
 
     'update tex buf
     ;
