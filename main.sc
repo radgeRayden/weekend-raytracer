@@ -133,18 +133,17 @@ enum Hittable
 HittableList := (Array Hittable)
 typedef+ HittableList
     fn hit? (self ray tmin tmax)
-        let hit? closest record =
-            fold (any-hit? closest last-record =
-                false tmax (HitRecordOpt none)) for obj in self
+        let closest record =
+            fold (closest last-record = tmax (HitRecordOpt none)) for obj in self
                 # we shrink max range every time we hit, to discard further objects
                 let record =
                     'hit? obj ray tmin closest
                 try
                     let new-record = ('unwrap record)
-                    _ true (copy new-record.t) record
+                    _ (copy new-record.t) record
                 else
-                    _ any-hit? closest last-record
-        _ record
+                    _ closest last-record
+        record
 
 global scene : HittableList
 'emplace-append scene
