@@ -37,6 +37,10 @@ run-stage;
 inline length2 (v)
     dot v v
 
+inline reflect (v n)
+    len := (dot v n)
+    v - (2 * len * n)
+
 global rng : PRNG.random.Xoshiro256+ 0
 fn random-unit-vector ()
     a := ('normalized rng) * 2 * pi
@@ -59,9 +63,22 @@ struct LambertianM
         scattered := (Ray record.p scatter-dir)
         attenuation := self.albedo
         _ true scattered attenuation
-       
+
+struct MetallicM
+    albedo : vec3
+
+    fn scatter (self iray record)
+        reflected := (reflect (normalize iray.direction) record.normal)
+        scattered := (Ray record.p reflected)
+        attenuation := self.albedo
+        _
+            (dot scattered.direction record.normal) > 0
+            scattered
+            attenuation
+      
 enum Material
     Lambertian : LambertianM
+    Metallic : MetallicM
 
     let __typecall = enum-class-constructor
 
@@ -146,14 +163,24 @@ typedef+ HittableList
         record
 
 global scene : HittableList
+global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
+global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.7 0.3 0.3)))
+global mat-left   : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.8 0.8)))
+global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)))
+
 'emplace-append scene
     SphereH (center = (vec3 0 0 -1)) (radius = 0.5)
-        Rc.wrap (Material (LambertianM (albedo = (vec3 0.15 1.0 0.15))))
+        copy mat-center
+'emplace-append scene
+    SphereH (center = (vec3 -1.0 0 -1)) (radius = 0.5)
+        copy mat-left
+'emplace-append scene
+    SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
+        copy mat-right
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
-        Rc.wrap (Material (LambertianM (albedo = (vec3 0.85 0.15 0.15))))
+        copy mat-ground
 
-# every run will have same results for now
 fn ray-color (r depth)
     if (depth >= unroll-limit)
         return (vec3)
