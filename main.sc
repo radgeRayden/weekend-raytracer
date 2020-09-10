@@ -155,8 +155,8 @@ typedef+ HittableList
                 # we shrink max range every time we hit, to discard further objects
                 let record =
                     'hit? obj ray tmin closest
-                try
-                    let new-record = ('unwrap record)
+                if record
+                    let new-record = ('force-unwrap record)
                     _ (copy new-record.t) record
                 else
                     _ closest last-record
@@ -186,8 +186,8 @@ fn ray-color (r depth)
         return (vec3)
 
     let record = ('hit? scene r 0.001 Inf)
-    try
-        let record = ('unwrap record)
+    if record
+        let record = ('force-unwrap record)
         mat := record.mat
         let scattered? sray attenuation = ('scatter mat r record)
         if scattered?
