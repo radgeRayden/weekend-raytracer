@@ -43,6 +43,17 @@ inline reflect (v n)
     v - (2 * len * n)
 
 global rng : PRNG.random.Xoshiro256+ 0
+
+fn random-in-unit-sphere ()
+    loop ()
+        let p =
+            vec3
+                (('normalized rng) * 2) - 1.0
+                (('normalized rng) * 2) - 1.0
+                (('normalized rng) * 2) - 1.0
+        if ((length2 p) < 1)
+            break p
+
 fn random-unit-vector ()
     a := ('normalized rng) * 2 * pi
     z := (('normalized rng) * 2) - 1
@@ -67,10 +78,11 @@ struct LambertianM
 
 struct MetallicM
     albedo : vec3
+    roughness : f32
 
     fn scatter (self iray record)
         reflected := (reflect (normalize iray.direction) record.normal)
-        scattered := (Ray record.p reflected)
+        scattered := (Ray record.p (reflected + ((random-in-unit-sphere) * self.roughness)))
         attenuation := self.albedo
         _
             (dot scattered.direction record.normal) > 0
@@ -166,8 +178,8 @@ typedef+ HittableList
 global scene : HittableList
 global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
 global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.7 0.3 0.3)))
-global mat-left   : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.8 0.8)))
-global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)))
+global mat-left   : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.8 0.8)) (roughness = 0.3))
+global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)) (roughness = 1.0))
 
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
