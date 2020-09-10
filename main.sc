@@ -169,6 +169,9 @@ global mat-left   : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.8 0.8)))
 global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)))
 
 'emplace-append scene
+    SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
+        copy mat-ground
+'emplace-append scene
     SphereH (center = (vec3 0 0 -1)) (radius = 0.5)
         copy mat-center
 'emplace-append scene
@@ -177,9 +180,6 @@ global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)))
 'emplace-append scene
     SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
         copy mat-right
-'emplace-append scene
-    SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
-        copy mat-ground
 
 fn ray-color (r depth)
     if (depth >= unroll-limit)
@@ -448,8 +448,8 @@ global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
 
 fn update-scene (t)
     let y = (mix 0.0 0.2 (t ** (1 - t)))
-    'apply (scene @ 0)
-        (T s) -> (s.center = (vec3 0 y -1))
+    # 'apply (scene @ 0)
+    #     (T s) -> (s.center = (vec3 0 y -1))
     ;
 
 fn update (dt)
