@@ -37,7 +37,8 @@ run-stage;
 inline length2 (v)
     dot v v
 
-fn random-unit-vector (rng)
+global rng : PRNG.random.Xoshiro256+ 0
+fn random-unit-vector ()
     a := ('normalized rng) * 2 * pi
     z := (('normalized rng) * 2) - 1
     r := (sqrt (1 - (* z z)))
@@ -51,7 +52,7 @@ struct Ray plain
         self.origin + (self.direction * t)
 
 struct LambertianM
-    albedo : vec4
+    albedo : vec3
 
     fn scatter (self iray record)
         scatter-dir := record.normal + (random-unit-vector)
@@ -64,8 +65,7 @@ enum Material
 
     let __typecall = enum-class-constructor
 
-    inline... scatter (self iray record attenuation)
-        returning bool Ray vec4
+    inline... scatter (self iray record)
         'apply self
             (T self) -> ('scatter self (va-tail *...))
 
@@ -148,13 +148,12 @@ typedef+ HittableList
 global scene : HittableList
 'emplace-append scene
     SphereH (center = (vec3 0 0 -1)) (radius = 0.5)
-        Rc.wrap (Material (LambertianM (albedo = (vec4 1 0 0 1))))
+        Rc.wrap (Material (LambertianM (albedo = (vec3 0.15 1.0 0.15))))
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
-        Rc.wrap (Material (LambertianM (albedo = (vec4 0 0 0 1))))
+        Rc.wrap (Material (LambertianM (albedo = (vec3 0.85 0.15 0.15))))
 
 # every run will have same results for now
-global rng : PRNG.random.Xoshiro256+ 0
 fn ray-color (r depth)
     if (depth >= unroll-limit)
         return (vec3)
@@ -162,9 +161,13 @@ fn ray-color (r depth)
     let record = ('hit? scene r 0.001 Inf)
     try
         let record = ('unwrap record)
-        let p n = record.p record.normal
-        bounce-target := p + n + (random-unit-vector rng)
-        0.5 * (this-function (Ray p (bounce-target - p)) (depth + 1))
+        mat := record.mat
+        let scattered? sray attenuation = ('scatter mat r record)
+        if scattered?
+            copy
+                attenuation * (this-function sray (depth + 1))
+        else
+            (vec3)
     else
         n := (normalize r.direction)
         t := 0.5 * (n.y + 1)
