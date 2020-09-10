@@ -13,6 +13,7 @@ let gfx = (import gfx.webgpu.backend)
 let wgpu = (import gfx.webgpu.wrapper)
 import HID
 import PRNG
+import timer
 
 FB_WIDTH        := 640:u32
 FB_HEIGHT       := 480:u32
@@ -253,6 +254,7 @@ struct RenderingState
     texture-binding   : wgpu.BindGroupId
 
 global state : (Option RenderingState)
+global clock : timer.Timer
 
 fn init ()
     HID.window.set-size FB_WIDTH FB_HEIGHT
@@ -441,6 +443,7 @@ fn init ()
     buf := ('force-unwrap state) . raytracing-buffer
     tex := ('force-unwrap state) . raytracing-target
     'resize buf ('capacity buf)
+    clock = (timer.Timer) # start counting from now
     ;
 
 global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
@@ -496,7 +499,7 @@ fn update (dt)
         print "sample" (deref frame-counter) "done"
         frame-counter += 1
         if (frame-counter == TOTAL_FRAMES)
-            print "render done!"
+            print "render done in" ('run-time-real clock) "seconds."
         y = 0
     else
         y += 1
