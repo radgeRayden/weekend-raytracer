@@ -15,6 +15,10 @@ import HID
 import PRNG
 import timer
 
+using import .utils
+using import .materials
+using import .hittables
+
 FB_WIDTH        := 640:u32
 FB_HEIGHT       := 480:u32
 # change this to average the scene over time
@@ -35,145 +39,6 @@ let viewport =
 lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
 run-stage;
 
-inline length2 (v)
-    dot v v
-
-inline reflect (v n)
-    len := (dot v n)
-    v - (2 * len * n)
-
-global rng : PRNG.random.Xoshiro256+ 0
-
-fn random-in-unit-sphere ()
-    loop ()
-        let p =
-            vec3
-                (('normalized rng) * 2) - 1.0
-                (('normalized rng) * 2) - 1.0
-                (('normalized rng) * 2) - 1.0
-        if ((length2 p) < 1)
-            break p
-
-fn random-unit-vector ()
-    a := ('normalized rng) * 2 * pi
-    z := (('normalized rng) * 2) - 1
-    r := (sqrt (1 - (* z z)))
-    vec3 (r * (cos a)) (r * (sin a)) z
-
-struct Ray plain
-    origin    : vec3
-    direction : vec3
-
-    fn at (self t)
-        self.origin + (self.direction * t)
-
-struct LambertianM
-    albedo : vec3
-
-    fn scatter (self iray record)
-        scatter-dir := record.normal + (random-unit-vector)
-        scattered := (Ray record.p scatter-dir)
-        attenuation := self.albedo
-        _ true scattered attenuation
-
-struct MetallicM
-    albedo : vec3
-    roughness : f32
-
-    fn scatter (self iray record)
-        reflected := (reflect (normalize iray.direction) record.normal)
-        scattered := (Ray record.p (reflected + ((random-in-unit-sphere) * self.roughness)))
-        attenuation := self.albedo
-        _
-            (dot scattered.direction record.normal) > 0
-            scattered
-            attenuation
-      
-enum Material
-    Lambertian : LambertianM
-    Metallic : MetallicM
-
-    let __typecall = enum-class-constructor
-
-    inline... scatter (self iray record)
-        'apply self
-            (T self) -> ('scatter self (va-tail *...))
-
-struct HitRecord
-    p      : vec3
-    normal : vec3
-    t      : f32
-    front? : bool
-    mat    : (Rc Material)
-
-    inline __typecall (cls ray t outward-normal material)
-        front? := (dot ray.direction outward-normal) < 0
-        super-type.__typecall cls
-            p = ('at ray t)
-            front? = front?
-            normal = (? front? outward-normal -outward-normal)
-            mat = material
-            t = t
-
-HitRecordOpt := (Option HitRecord)
-
-struct SphereH
-    center : vec3
-    radius : f32
-    mat    : (Rc Material)
-
-    fn hit? (self ray tmin tmax)
-        let center radius = self.center self.radius
-        oc := ray.origin - center
-        a  := (length2 ray.direction)
-        hb := (dot oc ray.direction)
-        c  := (length2 oc) - (pow radius 2)
-
-        discriminant := (pow hb 2) - (a * c)
-
-        if (discriminant > 0)
-            root := (sqrt discriminant)
-
-            # first root
-            t := (-hb - root) / a
-            if ((t < tmax) and (t > tmin))
-                let at = ('at ray t)
-                out-normal := (at - self.center) / self.radius
-                return (HitRecordOpt (HitRecord ray t out-normal (copy self.mat)))
-
-            # second root
-            t := (-hb + root) / a
-            if ((t < tmax) and (t > tmin))
-                let at = ('at ray t)
-                out-normal := (at - self.center) / self.radius
-                return (HitRecordOpt (HitRecord ray t out-normal (copy self.mat)))
-            _ (HitRecordOpt none)
-        else
-            _ (HitRecordOpt none)
-
-enum Hittable
-    Sphere : SphereH
-
-    let __typecall = enum-class-constructor
-
-    inline... hit? (self ray tmin tmax)
-        'apply self
-            (T self) -> ('hit? self (va-tail *...))
-
-HittableList := (Array Hittable)
-typedef+ HittableList
-    fn hit? (self ray tmin tmax)
-        let closest record =
-            fold (closest last-record = tmax (HitRecordOpt none)) for obj in self
-                # we shrink max range every time we hit, to discard further objects
-                let record =
-                    'hit? obj ray tmin closest
-                if record
-                    let new-record = ('force-unwrap record)
-                    _ (copy new-record.t) record
-                else
-                    _ closest last-record
-        record
 
 global scene : HittableList
 global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
