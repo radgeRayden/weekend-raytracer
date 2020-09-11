@@ -19,6 +19,8 @@ using import .utils
 using import .materials
 using import .hittables
 
+ENABLE_VISUAL_PROFILING? := false
+
 FB_WIDTH        := 640:u32
 FB_HEIGHT       := 480:u32
 # change this to average the scene over time
@@ -126,8 +128,12 @@ struct RenderingState
     raytracing-target : Texture
     sampler           : wgpu.SamplerId
     pipeline          : wgpu.RenderPipelineId
-    # tbinding-layout   : wgpu.BindGroupLayout
     texture-binding   : wgpu.BindGroupId
+
+    vprofile-target  : Texture
+    vprofile-binding : wgpu.BindGroupId
+    vprofile-buffer  : (Array Pixel (FB_WIDTH * FB_HEIGHT))
+    showing-profile? : bool
 
 global state : (Option RenderingState)
 global clock : timer.Timer
@@ -307,21 +313,33 @@ fn init ()
                                 sampler = sampler
                 entries_length = 2
 
-    let tex = (make-texture FB_WIDTH FB_HEIGHT wgpu.TextureFormat.Rgba8UnormSrgb)
+    let render-tex = (make-texture FB_WIDTH FB_HEIGHT wgpu.TextureFormat.Rgba8UnormSrgb)
+    let vprofile-tex = (make-texture FB_WIDTH FB_HEIGHT wgpu.TextureFormat.Rgba8UnormSrgb)
     let sampler = (make-sampler wgpu.FilterMode.Linear)
     let bgroup-layout = (make-texture-binding-layout)
     state =
         RenderingState
-            raytracing-target = tex
+            raytracing-target = render-tex
             sampler = sampler
             pipeline = (make-pipeline bgroup-layout)
-            texture-binding = (make-texture-bindgroup bgroup-layout tex.view sampler)
-    buf := ('force-unwrap state) . raytracing-buffer
-    tex := ('force-unwrap state) . raytracing-target
-    'resize buf ('capacity buf)
+            texture-binding = (make-texture-bindgroup
+                               bgroup-layout render-tex.view sampler)
+            vprofile-target = vprofile-tex
+            vprofile-binding = (make-texture-bindgroup
+                                bgroup-layout vprofile-tex.view sampler)
+
+    renderbuf := ('force-unwrap state) . raytracing-buffer
+    'resize renderbuf ('capacity renderbuf)
+
+    static-if ENABLE_VISUAL_PROFILING?
+        vprofilebuf := ('force-unwrap state) . vprofile-buffer
+        'resize vprofilebuf ('capacity vprofilebuf)
+
     clock = (timer.Timer) # start counting from now
     ;
 
+global profile-heatmap : (Array f32 (FB_WIDTH * FB_HEIGHT))
+'resize profile-heatmap ('capacity profile-heatmap)
 global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
 'resize color-buffer ('capacity color-buffer)
 
@@ -332,9 +350,25 @@ fn update-scene (t)
     ;
 
 fn update (dt)
+    global highest-ray-time : f32
     global frame-counter : i32 0
     global y : u32
+
     if (frame-counter >= TOTAL_FRAMES)
+        static-if ENABLE_VISUAL_PROFILING?
+            state := ('force-unwrap state)
+            if (HID.keyboard.down? HID.keyboard.KeyCode.SPACE)
+                state.showing-profile? = (not state.showing-profile?)
+            if state.showing-profile?
+                # update buffer with normalized data
+                buf := state.vprofile-buffer
+                for i in (range (countof profile-heatmap))
+                    buf @ i =
+                        typeinit
+                            va-map
+                                (x) -> ((clamp (x * 255) 0. 255.) as u8)
+                                unpack (vec4 (vec3 ((profile-heatmap @ i) / highest-ray-time)) 1)
+                'update state.vprofile-target buf
         return;
 
     update-scene (frame-counter / TOTAL_FRAMES)
@@ -347,6 +381,7 @@ fn update (dt)
 
     tex := ('force-unwrap state) . raytracing-target
 
+    'step clock
     for x in (range FB_WIDTH)
         vvv bind color-result
         fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
@@ -361,6 +396,12 @@ fn update (dt)
         pixel := color-buffer @ idx
         frame-counter as:= f32
         pixel = ((frame-counter * (color-buffer @ idx) + color-result) / (frame-counter + 1))
+
+        static-if ENABLE_VISUAL_PROFILING?
+            'step clock
+            rdt := (('delta-time clock) as f32)
+            profile-heatmap @ idx = rdt
+            highest-ray-time = (max rdt highest-ray-time)
 
     # copy to texture
     buf := ('force-unwrap state) . raytracing-buffer
@@ -386,7 +427,10 @@ fn update (dt)
 fn draw (cmd-encoder render-pass)
     let state = ('force-unwrap state)
     wgpu.render_pass_set_pipeline render-pass state.pipeline
-    wgpu.render_pass_set_bind_group render-pass 0 state.texture-binding null 0
+    if (not state.showing-profile?)
+        wgpu.render_pass_set_bind_group render-pass 0 state.texture-binding null 0
+    else
+        wgpu.render_pass_set_bind_group render-pass 0 state.vprofile-binding null 0
     wgpu.render_pass_draw render-pass 6 1 0 0
     ;
 
