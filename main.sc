@@ -39,7 +39,6 @@ let viewport =
 lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
 run-stage;
 
-
 global scene : HittableList
 global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
 global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.7 0.3 0.3)))

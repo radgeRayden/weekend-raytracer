@@ -32,7 +32,6 @@ struct HitRecord
 
 HitRecordOpt := (Option HitRecord)
 
-
 global rng : PRNG.random.Xoshiro256+ 0
 
 inline length2 (v)
@@ -41,7 +40,6 @@ inline length2 (v)
 inline reflect (v n)
     len := (dot v n)
     v - (2 * len * n)
-
 
 fn random-in-unit-sphere ()
     loop ()
