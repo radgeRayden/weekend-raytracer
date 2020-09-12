@@ -45,7 +45,7 @@ global scene : HittableList
 global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
 global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.7 0.3 0.3)))
 global mat-left   : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.8 0.8)) (roughness = 0.3))
-global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)) (roughness = 1.0))
+global mat-right  : (Rc Material) (DielectricM (refraction-index = 1.5))
 
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
@@ -58,6 +58,9 @@ global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)) (roug
         copy mat-left
 'emplace-append scene
     SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
+        copy mat-right
+'emplace-append scene
+    SphereH (center = (vec3 1.0 0 -1)) (radius = -0.4)
         copy mat-right
 
 fn ray-color (r depth)

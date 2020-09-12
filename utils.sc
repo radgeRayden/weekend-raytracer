@@ -37,9 +37,21 @@ global rng : PRNG.random.Xoshiro256+ 0
 inline length2 (v)
     dot v v
 
+inline refract (unit-v n refraction-coef)
+    v := unit-v
+    # because we know normal is always ponting against the ray
+    cos-theta := (dot -v n)
+    r-out-perp := refraction-coef * (v + (n * cos-theta))
+    r-out-parallel := (- (sqrt (abs (1.0 - (length2 r-out-perp))))) * n
+    r-out-perp + r-out-parallel
+
 inline reflect (v n)
     len := (dot v n)
     v - (2 * len * n)
+
+inline schlick (cosine refraction-index)
+    r0 := ((1 - refraction-index) / (1 + refraction-index)) ** 2
+    r0 + (1 - r0) * ((1 - cosine) ** 5)
 
 fn random-in-unit-sphere ()
     loop ()
