@@ -69,4 +69,9 @@ fn random-unit-vector ()
     r := (sqrt (1 - (* z z)))
     vec3 (r * (cos a)) (r * (sin a)) z
 
-locals;
+do
+    let Ray HitRecord HitRecordOpt rng length2 refract reflect schlick random-in-unit-sphere \
+        random-unit-vector
+    # so materials.sc can see it
+    let Material
+    locals;

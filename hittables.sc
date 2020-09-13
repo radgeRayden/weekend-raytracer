@@ -67,4 +67,6 @@ typedef+ HittableList
                     _ closest last-record
         record
 
-locals;
+do
+    let SphereH Hittable HittableList
+    locals;

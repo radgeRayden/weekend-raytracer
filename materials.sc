@@ -64,4 +64,6 @@ enum Material
         'apply self
             (T self) -> ('scatter self (va-tail *...))
 
-locals;
+do
+    let LambertianM MetallicM DielectricM Material
+    locals;
