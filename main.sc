@@ -18,27 +18,19 @@ import timer
 using import .utils
 using import .materials
 using import .hittables
+using import .camera
 
 ENABLE_VISUAL_PROFILING? := false
 
-FB_WIDTH        := 640:u32
-FB_HEIGHT       := 480:u32
 # change this to average the scene over time
 TOTAL_FRAMES    := 1
 RT_SAMPLE_COUNT := 100
 
-aspect-ratio    := FB_WIDTH / FB_HEIGHT
-viewport-height := 2.0
-viewport-width  := aspect-ratio * viewport-height
-focal-length    := 1.0
-origin          := (vec3)
-
-let viewport =
-    vec3 viewport-width viewport-height focal-length
-
-# -Z goes towards the screen; so this puts us at the lower left corner
-# of the projection plane.
-lower-left-corner := origin - (vec3 (viewport.xy / 2) viewport.z)
+FB_WIDTH     := 640:u32
+FB_HEIGHT    := 480:u32
+vFOV         := (pi / 2)
+aspect-ratio := FB_WIDTH / FB_HEIGHT
+cam          := (Camera vFOV aspect-ratio)
 run-stage;
 
 global scene : HittableList
@@ -83,9 +75,7 @@ fn ray-color (r depth)
         mix (vec3 1) (vec3 0.5 0.7 1) t
 
 fn color (uv)
-    # ray from origin (camera/eye) towards projection plane at remapped UV
-    dir := (lower-left-corner + (vec3 (uv * viewport.xy) 0) - origin)
-    vec4 (ray-color (Ray origin dir) 0) 1
+    vec4 (ray-color ('ray cam uv) 0) 1
 
 struct Pixel plain
     r : u8
