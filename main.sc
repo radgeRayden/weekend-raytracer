@@ -28,9 +28,15 @@ RT_SAMPLE_COUNT := 100
 
 FB_WIDTH     := 640:u32
 FB_HEIGHT    := 480:u32
-vFOV         := (pi / 2)
+vFOV         := 20 * (pi / 180)
 aspect-ratio := FB_WIDTH / FB_HEIGHT
-cam          := (Camera (vec3 -2 2 1) (vec3 0 0 -1) (vec3 0 1 0) vFOV aspect-ratio)
+
+lookfrom   := (vec3 3 3 2)
+lookat     := (vec3 0 0 -1)
+vup        := (vec3 0 1 0)
+focus-dist := (length (lookfrom - lookat))
+aperture   := 2.0
+cam          := (Camera lookfrom lookat vup vFOV aspect-ratio aperture focus-dist)
 run-stage;
 
 global scene : HittableList
