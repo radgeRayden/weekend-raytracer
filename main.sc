@@ -49,7 +49,7 @@ global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)) (roug
     SphereH (center = (vec3 -1.0 0 -1)) (radius = 0.5)
         copy mat-left
 'emplace-append scene
-    SphereH (center = (vec3 1.0 0 -1)) (radius = -0.45)
+    SphereH (center = (vec3 -1.0 0 -1)) (radius = -0.45)
         copy mat-left
 'emplace-append scene
     SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
