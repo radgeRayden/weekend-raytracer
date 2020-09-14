@@ -24,42 +24,68 @@ ENABLE_VISUAL_PROFILING? := false
 
 # change this to average the scene over time
 TOTAL_FRAMES    := 1
-RT_SAMPLE_COUNT := 100
+RT_SAMPLE_COUNT := 500
 
-FB_WIDTH     := 640:u32
-FB_HEIGHT    := 480:u32
+FB_WIDTH     := 1200:u32
+FB_HEIGHT    := 675:u32
 vFOV         := 20 * (pi / 180)
 aspect-ratio := FB_WIDTH / FB_HEIGHT
 
-lookfrom   := (vec3 3 3 2)
-lookat     := (vec3 0 0 -1)
+lookfrom   := (vec3 13 2 3)
+lookat     := (vec3 0 0 0)
 vup        := (vec3 0 1 0)
-focus-dist := (length (lookfrom - lookat))
-aperture   := 2.0
+focus-dist := 10.0
+aperture   := 0.1
 cam          := (Camera lookfrom lookat vup vFOV aspect-ratio aperture focus-dist)
 run-stage;
 
+# random scene
 global scene : HittableList
-global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
-global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.1 0.2 0.5)))
-global mat-left   : (Rc Material) (DielectricM (refraction-index = 1.5))
-global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)) (roughness = 0.0))
+global ground-material : (Rc Material)
+    LambertianM (albedo = (vec3 0.5))
+'emplace-append scene
+    SphereH (vec3 0 -1000 0) 1000 (copy ground-material)
 
+for a in (range -11 11)
+    for b in (range -11 11)
+        a as:= f32
+        b as:= f32
+        choose-mat := ('normalized rng)
+        let center =
+            vec3
+                a + 0.9 * ('normalized rng)
+                0.2
+                b + 0.9 * ('normalized rng)
+
+        fn... random-color (lb = 0.0, ub = 1.0)
+            vec3
+                ('normalized rng) * (ub - lb) + lb
+                ('normalized rng) * (ub - lb) + lb
+                ('normalized rng) * (ub - lb) + lb
+
+        if ((length (center - (vec3 4 0.2 0))) > 0.9)
+            let sphere-material =
+                if (choose-mat < 0.8)
+                    albedo := (random-color) * (random-color)
+                    Rc.wrap (Material (LambertianM albedo))
+                elseif (choose-mat < 0.95)
+                    albedo := (random-color 0.5 1.0)
+                    roughness := (('normalized rng) * 0.5) as f32
+                    Rc.wrap (Material (MetallicM albedo roughness))
+                else
+                    Rc.wrap (Material (DielectricM 1.5))
+            'emplace-append scene
+                SphereH center 0.2 sphere-material
+
+global material1 : (Rc Material) (DielectricM 1.5)
 'emplace-append scene
-    SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
-        copy mat-ground
+    SphereH (vec3 0 1 0) 1.0 (copy material1)
+global material2 : (Rc Material) (LambertianM (vec3 0.4 0.2 0.1))
 'emplace-append scene
-    SphereH (center = (vec3 0 0 -1)) (radius = 0.5)
-        copy mat-center
+    SphereH (vec3 -4 1 0) 1.0 (copy material2)
+global material3 : (Rc Material) (MetallicM (vec3 0.7 0.6 0.5) 0.0)
 'emplace-append scene
-    SphereH (center = (vec3 -1.0 0 -1)) (radius = 0.5)
-        copy mat-left
-'emplace-append scene
-    SphereH (center = (vec3 -1.0 0 -1)) (radius = -0.45)
-        copy mat-left
-'emplace-append scene
-    SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
-        copy mat-right
+    SphereH (vec3 4 1 0) 1.0 (copy material3)
 
 fn ray-color (r depth)
     if (depth >= unroll-limit)
