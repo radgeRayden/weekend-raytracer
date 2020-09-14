@@ -30,14 +30,14 @@ FB_WIDTH     := 640:u32
 FB_HEIGHT    := 480:u32
 vFOV         := (pi / 2)
 aspect-ratio := FB_WIDTH / FB_HEIGHT
-cam          := (Camera vFOV aspect-ratio)
+cam          := (Camera (vec3 -2 2 1) (vec3 0 0 -1) (vec3 0 1 0) vFOV aspect-ratio)
 run-stage;
 
 global scene : HittableList
 global mat-ground : (Rc Material) (LambertianM (albedo = (vec3 0.8 0.8 0)))
-global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.7 0.3 0.3)))
-global mat-left   : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.8 0.8)) (roughness = 0.3))
-global mat-right  : (Rc Material) (DielectricM (refraction-index = 1.5))
+global mat-center : (Rc Material) (LambertianM (albedo = (vec3 0.1 0.2 0.5)))
+global mat-left   : (Rc Material) (DielectricM (refraction-index = 1.5))
+global mat-right  : (Rc Material) (MetallicM (albedo = (vec3 0.8 0.6 0.2)) (roughness = 0.0))
 
 'emplace-append scene
     SphereH (center = (vec3 0 -100.5 -1)) (radius = 100)
@@ -49,10 +49,10 @@ global mat-right  : (Rc Material) (DielectricM (refraction-index = 1.5))
     SphereH (center = (vec3 -1.0 0 -1)) (radius = 0.5)
         copy mat-left
 'emplace-append scene
-    SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
-        copy mat-right
+    SphereH (center = (vec3 1.0 0 -1)) (radius = -0.45)
+        copy mat-left
 'emplace-append scene
-    SphereH (center = (vec3 1.0 0 -1)) (radius = -0.4)
+    SphereH (center = (vec3 1.0 0 -1)) (radius = 0.5)
         copy mat-right
 
 fn ray-color (r depth)
