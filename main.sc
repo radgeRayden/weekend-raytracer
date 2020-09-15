@@ -21,14 +21,10 @@ using import .camera
 using import .scene
 import .threads
 
-THREAD_COUNT := 3
+THREAD_COUNT := 4
 
-ENABLE_VISUAL_PROFILING? := false
-MAX_BOUNCES     := 50
-
-# change this to average the scene over time
-TOTAL_FRAMES    := 1
 RT_SAMPLE_COUNT := 500
+MAX_BOUNCES     := 50
 
 FB_WIDTH     := 1200:u32
 FB_HEIGHT    := 675:u32
@@ -40,7 +36,7 @@ lookat     := (vec3 0 0 0)
 vup        := (vec3 0 1 0)
 focus-dist := 10.0
 aperture   := 0.1
-cam          := (Camera lookfrom lookat vup vFOV aspect-ratio aperture focus-dist)
+cam        := (Camera lookfrom lookat vup vFOV aspect-ratio aperture focus-dist)
 run-stage;
 
 # random scene
@@ -182,11 +178,6 @@ struct RenderingState
     sampler           : wgpu.SamplerId
     pipeline          : wgpu.RenderPipelineId
     texture-binding   : wgpu.BindGroupId
-
-    vprofile-target  : Texture
-    vprofile-binding : wgpu.BindGroupId
-    vprofile-buffer  : (Array Pixel (FB_WIDTH * FB_HEIGHT))
-    showing-profile? : bool
 
 global state : (Option RenderingState)
 global clock : timer.Timer
@@ -367,7 +358,6 @@ fn init ()
                 entries_length = 2
 
     let render-tex = (make-texture FB_WIDTH FB_HEIGHT wgpu.TextureFormat.Rgba8UnormSrgb)
-    let vprofile-tex = (make-texture FB_WIDTH FB_HEIGHT wgpu.TextureFormat.Rgba8UnormSrgb)
     let sampler = (make-sampler wgpu.FilterMode.Linear)
     let bgroup-layout = (make-texture-binding-layout)
     state =
@@ -377,16 +367,9 @@ fn init ()
             pipeline = (make-pipeline bgroup-layout)
             texture-binding = (make-texture-bindgroup
                                bgroup-layout render-tex.view sampler)
-            vprofile-target = vprofile-tex
-            vprofile-binding = (make-texture-bindgroup
-                                bgroup-layout vprofile-tex.view sampler)
 
     renderbuf := ('force-unwrap state) . raytracing-buffer
     'resize renderbuf ('capacity renderbuf)
-
-    static-if ENABLE_VISUAL_PROFILING?
-        vprofilebuf := ('force-unwrap state) . vprofile-buffer
-        'resize vprofilebuf ('capacity vprofilebuf)
 
     clock = (timer.Timer) # start counting from now
 
@@ -404,87 +387,6 @@ fn init ()
                     null as voidstar
                 null
         va-range THREAD_COUNT
-    ;
-
-fn update-scene (t)
-    let y = (mix 0.0 0.2 (t ** (1 - t)))
-    # 'apply (scene @ 0)
-    #     (T s) -> (s.center = (vec3 0 y -1))
-    ;
-
-fn _update (dt)
-    global highest-ray-time : f32
-    global frame-counter : i32 0
-    global y : u32
-
-    if (frame-counter >= TOTAL_FRAMES)
-        static-if ENABLE_VISUAL_PROFILING?
-            state := ('force-unwrap state)
-            if (HID.keyboard.down? HID.keyboard.KeyCode.SPACE)
-                state.showing-profile? = (not state.showing-profile?)
-            if state.showing-profile?
-                # update buffer with normalized data
-                buf := state.vprofile-buffer
-                for i in (range (countof profile-heatmap))
-                    buf @ i =
-                        typeinit
-                            va-map
-                                (x) -> ((clamp (x * 255) 0. 255.) as u8)
-                                unpack (vec4 (vec3 ((profile-heatmap @ i) / highest-ray-time)) 1)
-                'update state.vprofile-target buf
-        return;
-
-    update-scene (frame-counter / TOTAL_FRAMES)
-
-    # generate the image and average with previous frames
-    scale := 1.0 / RT_SAMPLE_COUNT
-
-    using import itertools
-    using import glm
-
-    tex := ('force-unwrap state) . raytracing-target
-
-    'step clock
-    for x in (range FB_WIDTH)
-        vvv bind color-result
-        fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
-            let uv =
-                /
-                    (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
-                    (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
-            color-result + (color uv)
-
-        color-result := color-result * scale
-        idx := y * FB_WIDTH + x
-        pixel := color-buffer @ idx
-        frame-counter as:= f32
-        pixel = ((frame-counter * (color-buffer @ idx) + color-result) / (frame-counter + 1))
-
-        static-if ENABLE_VISUAL_PROFILING?
-            'step clock
-            rdt := (('delta-time clock) as f32)
-            profile-heatmap @ idx = rdt
-            highest-ray-time = (max rdt highest-ray-time)
-
-    # copy to texture
-    buf := ('force-unwrap state) . raytracing-buffer
-    for i in (range (countof color-buffer))
-        buf @ i =
-            typeinit
-                va-map
-                    (x) -> ((clamp (x * 255) 0. 255.) as u8)
-                    unpack (sqrt (color-buffer @ i))
-
-    if (y >= (FB_HEIGHT - 1))
-        print "sample" (deref frame-counter) "done"
-        frame-counter += 1
-        if (frame-counter == TOTAL_FRAMES)
-            print "render done in" ('run-time-real clock) "seconds."
-        y = 0
-    else
-        y += 1
-
-    'update tex buf
     ;
 
 fn update (dt)
@@ -508,10 +410,7 @@ fn update (dt)
 fn draw (cmd-encoder render-pass)
     let state = ('force-unwrap state)
     wgpu.render_pass_set_pipeline render-pass state.pipeline
-    if (not state.showing-profile?)
-        wgpu.render_pass_set_bind_group render-pass 0 state.texture-binding null 0
-    else
-        wgpu.render_pass_set_bind_group render-pass 0 state.vprofile-binding null 0
+    wgpu.render_pass_set_bind_group render-pass 0 state.texture-binding null 0
     wgpu.render_pass_draw render-pass 6 1 0 0
     ;
 
