@@ -12,7 +12,7 @@ using import Array
 struct SphereH
     center : vec3
     radius : f32
-    mat    : (Rc Material)
+    mat    : usize
 
     fn hit? (self ray tmin tmax)
         let center radius = self.center self.radius
@@ -31,17 +31,19 @@ struct SphereH
             if ((t < tmax) and (t > tmin))
                 let at = ('at ray t)
                 out-normal := (at - self.center) / self.radius
-                return (HitRecordOpt (HitRecord ray t out-normal (copy self.mat)))
+                return true
+                    HitRecord ray t out-normal self.mat
 
             # second root
             t := (-hb + root) / a
             if ((t < tmax) and (t > tmin))
                 let at = ('at ray t)
                 out-normal := (at - self.center) / self.radius
-                return (HitRecordOpt (HitRecord ray t out-normal (copy self.mat)))
-            _ (HitRecordOpt none)
+                return true
+                    HitRecord ray t out-normal self.mat
+            _ false (undef HitRecord)
         else
-            _ (HitRecordOpt none)
+            _ false (undef HitRecord)
 
 enum Hittable
     Sphere : SphereH
@@ -55,17 +57,16 @@ enum Hittable
 HittableList := (Array Hittable)
 typedef+ HittableList
     fn hit? (self ray tmin tmax)
-        let closest record =
-            fold (closest last-record = tmax (HitRecordOpt none)) for obj in self
+        let hit? closest record =
+            fold (hit-any? closest last-record = false tmax (undef HitRecord)) for obj in self
                 # we shrink max range every time we hit, to discard further objects
-                let record =
+                let hit? record =
                     'hit? obj ray tmin closest
-                if record
-                    let new-record = ('force-unwrap record)
-                    _ (copy new-record.t) record
+                if hit?
+                    _ true record.t record
                 else
-                    _ closest last-record
-        record
+                    _ hit-any? closest last-record
+        _ hit? record
 
 do
     let SphereH Hittable HittableList

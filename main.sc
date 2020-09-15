@@ -5,7 +5,6 @@ using import Array
 using import glm
 using import struct
 using import enum
-using import Rc
 
 import .raydEngine.use
 import app
@@ -19,9 +18,10 @@ using import .utils
 using import .materials
 using import .hittables
 using import .camera
+using import .scene
 import .threads
 
-THREAD_COUNT := 1
+THREAD_COUNT := 3
 
 ENABLE_VISUAL_PROFILING? := false
 
@@ -43,11 +43,12 @@ cam          := (Camera lookfrom lookat vup vFOV aspect-ratio aperture focus-dis
 run-stage;
 
 # random scene
-global scene : HittableList
-global ground-material : (Rc Material)
-    LambertianM (albedo = (vec3 0.5))
-'emplace-append scene
-    SphereH (vec3 0 -1000 0) 1000 (copy ground-material)
+global world : Scene
+global ground-material =
+    'add-material world
+        LambertianM (albedo = (vec3 0.5))
+'emplace-append world.objects
+    SphereH (vec3 0 -1000 0) 1000 ground-material
 
 for a in (range -11 11)
     for b in (range -11 11)
@@ -70,34 +71,34 @@ for a in (range -11 11)
             let sphere-material =
                 if (choose-mat < 0.8)
                     albedo := (random-color) * (random-color)
-                    Rc.wrap (Material (LambertianM albedo))
+                    'add-material world (LambertianM albedo)
                 elseif (choose-mat < 0.95)
                     albedo := (random-color 0.5 1.0)
                     roughness := (('normalized rng) * 0.5) as f32
-                    Rc.wrap (Material (MetallicM albedo roughness))
+                    'add-material world (MetallicM albedo roughness)
                 else
-                    Rc.wrap (Material (DielectricM 1.5))
-            'emplace-append scene
+                    'add-material world (DielectricM 1.5)
+
+            'emplace-append world.objects
                 SphereH center 0.2 sphere-material
 
-global material1 : (Rc Material) (DielectricM 1.5)
-'emplace-append scene
-    SphereH (vec3 0 1 0) 1.0 (copy material1)
-global material2 : (Rc Material) (LambertianM (vec3 0.4 0.2 0.1))
-'emplace-append scene
-    SphereH (vec3 -4 1 0) 1.0 (copy material2)
-global material3 : (Rc Material) (MetallicM (vec3 0.7 0.6 0.5) 0.0)
-'emplace-append scene
-    SphereH (vec3 4 1 0) 1.0 (copy material3)
+global material1 = ('add-material world (DielectricM 1.5))
+'emplace-append world.objects
+    SphereH (vec3 0 1 0) 1.0 material1
+global material2 = ('add-material world (LambertianM (vec3 0.4 0.2 0.1)))
+'emplace-append world.objects
+    SphereH (vec3 -4 1 0) 1.0  material2
+global material3 = ('add-material world (MetallicM (vec3 0.7 0.6 0.5) 0.0))
+'emplace-append world.objects
+    SphereH (vec3 4 1 0) 1.0 material3
 
 fn ray-color (r depth)
     if (depth >= unroll-limit)
         return (vec3)
 
-    let record = ('hit? scene r 0.001 Inf)
-    if record
-        let record = ('force-unwrap record)
-        mat := record.mat
+    let hit? record = ('hit? world.objects r 0.001 Inf)
+    if hit?
+        mat := ('material world record.mat)
         let scattered? sray attenuation = ('scatter mat r record)
         if scattered?
             copy

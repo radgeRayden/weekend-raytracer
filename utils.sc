@@ -14,12 +14,12 @@ struct Ray plain
         self.origin + (self.direction * t)
 
 enum Material
-struct HitRecord
+struct HitRecord plain
     p      : vec3
     normal : vec3
     t      : f32
     front? : bool
-    mat    : (Rc Material)
+    mat    : usize
 
     inline __typecall (cls ray t outward-normal material)
         front? := (dot ray.direction outward-normal) < 0
