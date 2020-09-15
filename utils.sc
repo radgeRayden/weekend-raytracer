@@ -32,7 +32,6 @@ struct HitRecord plain
 
 HitRecordOpt := (Option HitRecord)
 
-global rng : PRNG.random.Xoshiro256+ 0
 
 inline length2 (v)
     dot v v
@@ -53,7 +52,7 @@ inline schlick (cosine refraction-index)
     r0 := ((1 - refraction-index) / (1 + refraction-index)) ** 2
     r0 + (1 - r0) * ((1 - cosine) ** 5)
 
-fn random-in-unit-sphere ()
+fn random-in-unit-sphere (rng)
     loop ()
         let p =
             vec3
@@ -63,13 +62,13 @@ fn random-in-unit-sphere ()
         if ((length2 p) < 1)
             break p
 
-fn random-unit-vector ()
+fn random-unit-vector (rng)
     a := ('normalized rng) * 2 * pi
     z := (('normalized rng) * 2) - 1
     r := (sqrt (1 - (* z z)))
     vec3 (r * (cos a)) (r * (sin a)) z
 
-fn random-in-unit-disk ()
+fn random-in-unit-disk (rng)
     loop ()
         let p =
             vec2
@@ -79,7 +78,7 @@ fn random-in-unit-disk ()
             return p.xy0
 
 do
-    let Ray HitRecord HitRecordOpt rng length2 refract reflect schlick random-in-unit-sphere \
+    let Ray HitRecord HitRecordOpt length2 refract reflect schlick random-in-unit-sphere \
         random-unit-vector random-in-unit-disk
     # so materials.sc can see it
     let Material

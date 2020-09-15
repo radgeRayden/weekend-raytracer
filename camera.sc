@@ -36,9 +36,9 @@ struct Camera plain
             uvw = (mat3 u v w)
             lens-radius = lens-radius
 
-    fn ray (self uv)
+    fn ray (self uv rng)
         let u v w = (unpack self.uvw)
-        rd     := self.lens-radius * (random-in-unit-disk)
+        rd     := self.lens-radius * (random-in-unit-disk rng)
         offset :=  (u * rd.x) + (v * rd.y)
         Ray (self.origin + offset)
             + self.lower-left-corner

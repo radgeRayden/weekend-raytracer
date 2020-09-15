@@ -8,8 +8,8 @@ using import .utils
 struct LambertianM
     albedo : vec3
 
-    fn scatter (self iray record)
-        scatter-dir := record.normal + (random-unit-vector)
+    fn scatter (self iray record rng)
+        scatter-dir := record.normal + (random-unit-vector rng)
         scattered := (Ray record.p scatter-dir)
         attenuation := self.albedo
         _ true scattered (deref attenuation)
@@ -18,9 +18,9 @@ struct MetallicM
     albedo : vec3
     roughness : f32
 
-    fn scatter (self iray record)
+    fn scatter (self iray record rng)
         reflected := (reflect (normalize iray.direction) record.normal)
-        scattered := (Ray record.p (reflected + ((random-in-unit-sphere) * self.roughness)))
+        scattered := (Ray record.p (reflected + ((random-in-unit-sphere rng) * self.roughness)))
         attenuation := self.albedo
         _
             (dot scattered.direction record.normal) > 0
@@ -30,7 +30,7 @@ struct MetallicM
 struct DielectricM
     refraction-index : f32
 
-    fn scatter (self iray record)
+    fn scatter (self iray record rng)
         attenuation := (vec3 1) # never absorb
         let coef =
             # air -> dielectric or dielectric -> air
@@ -60,7 +60,7 @@ enum Material
 
     let __typecall = enum-class-constructor
 
-    inline... scatter (self iray record)
+    inline... scatter (self iray record rng)
         'apply self
             (T self) -> ('scatter self (va-tail *...))
 

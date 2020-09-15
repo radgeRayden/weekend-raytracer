@@ -43,6 +43,7 @@ cam          := (Camera lookfrom lookat vup vFOV aspect-ratio aperture focus-dis
 run-stage;
 
 # random scene
+global rng : PRNG.random.Xoshiro256** 0
 global world : Scene
 global ground-material =
     'add-material world
@@ -92,17 +93,17 @@ global material3 = ('add-material world (MetallicM (vec3 0.7 0.6 0.5) 0.0))
 'emplace-append world.objects
     SphereH (vec3 4 1 0) 1.0 material3
 
-fn ray-color (r depth)
+fn ray-color (r depth rng)
     if (depth >= unroll-limit)
         return (vec3)
 
     let hit? record = ('hit? world.objects r 0.001 Inf)
     if hit?
         mat := ('material world record.mat)
-        let scattered? sray attenuation = ('scatter mat r record)
+        let scattered? sray attenuation = ('scatter mat r record rng)
         if scattered?
             copy
-                attenuation * (this-function sray (depth + 1))
+                attenuation * (this-function sray (depth + 1) rng)
         else
             (vec3)
     else
@@ -110,15 +111,15 @@ fn ray-color (r depth)
         t := 0.5 * (n.y + 1)
         mix (vec3 1) (vec3 0.5 0.7 1) t
 
-fn color (uv)
-    vec4 (ray-color ('ray cam uv) 0) 1
+fn color (uv rng)
+    vec4 (ray-color ('ray cam uv rng) 0 rng) 1
 
 global profile-heatmap : (Array f32 (FB_WIDTH * FB_HEIGHT))
 'resize profile-heatmap ('capacity profile-heatmap)
 global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
 'resize color-buffer ('capacity color-buffer)
 
-fn render-row (row)
+fn render-row (row rng)
     scale := 1.0 / RT_SAMPLE_COUNT
     for x in (range FB_WIDTH)
         vvv bind color-result
@@ -127,7 +128,7 @@ fn render-row (row)
                 /
                     (vec2 x row) + (vec2 ('normalized rng) ('normalized rng))
                     (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
-            color-result + (color uv)
+            color-result + (color uv rng)
 
         color-result := color-result * scale
         idx := row * FB_WIDTH + x
@@ -391,9 +392,12 @@ fn init ()
         inline (i)
             threads.spawn
                 fn (arg)
+                    # in lieu of a proper jump function
+                    local rng : PRNG.random.Xoshiro256+ (i * 1000)
                     for y in (range FB_HEIGHT)
                         if ((y % THREAD_COUNT) == i)
-                            render-row y
+                            render-row y rng
+                    print "thread" i "done in" ('run-time-real clock) "seconds"
                     null as voidstar
                 null
         va-range THREAD_COUNT
