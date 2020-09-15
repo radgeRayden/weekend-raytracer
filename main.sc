@@ -384,12 +384,19 @@ fn init ()
         'resize vprofilebuf ('capacity vprofilebuf)
 
     clock = (timer.Timer) # start counting from now
-    ;
 
-global profile-heatmap : (Array f32 (FB_WIDTH * FB_HEIGHT))
-'resize profile-heatmap ('capacity profile-heatmap)
-global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
-'resize color-buffer ('capacity color-buffer)
+    # dispatch work
+    va-map
+        inline (i)
+            threads.spawn
+                fn (arg)
+                    for y in (range FB_HEIGHT)
+                        if ((y % THREAD_COUNT) == i)
+                            render-row y
+                    null as voidstar
+                null
+        va-range THREAD_COUNT
+    ;
 
 fn update-scene (t)
     let y = (mix 0.0 0.2 (t ** (1 - t)))
