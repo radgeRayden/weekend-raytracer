@@ -19,6 +19,9 @@ using import .utils
 using import .materials
 using import .hittables
 using import .camera
+import .threads
+
+THREAD_COUNT := 1
 
 ENABLE_VISUAL_PROFILING? := false
 
@@ -108,6 +111,26 @@ fn ray-color (r depth)
 
 fn color (uv)
     vec4 (ray-color ('ray cam uv) 0) 1
+
+global profile-heatmap : (Array f32 (FB_WIDTH * FB_HEIGHT))
+'resize profile-heatmap ('capacity profile-heatmap)
+global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
+'resize color-buffer ('capacity color-buffer)
+
+fn render-row (row)
+    scale := 1.0 / RT_SAMPLE_COUNT
+    for x in (range FB_WIDTH)
+        vvv bind color-result
+        fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
+            let uv =
+                /
+                    (vec2 x row) + (vec2 ('normalized rng) ('normalized rng))
+                    (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+            color-result + (color uv)
+
+        color-result := color-result * scale
+        idx := row * FB_WIDTH + x
+        color-buffer @ idx = color-result
 
 struct Pixel plain
     r : u8
@@ -374,7 +397,7 @@ fn update-scene (t)
     #     (T s) -> (s.center = (vec3 0 y -1))
     ;
 
-fn update (dt)
+fn _update (dt)
     global highest-ray-time : f32
     global frame-counter : i32 0
     global y : u32
@@ -448,6 +471,24 @@ fn update (dt)
 
     'update tex buf
     ;
+
+fn update (dt)
+    # copy to texture
+    local copy-color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
+    'reserve copy-color-buffer ('capacity color-buffer)
+    for el in color-buffer
+        'append copy-color-buffer el
+
+    tex := ('force-unwrap state) . raytracing-target
+    buf := ('force-unwrap state) . raytracing-buffer
+    for i in (range (countof color-buffer))
+        buf @ i =
+            typeinit
+                va-map
+                    (x) -> ((clamp (x * 255) 0. 255.) as u8)
+                    unpack (sqrt (copy-color-buffer @ i))
+
+    'update tex buf
 
 fn draw (cmd-encoder render-pass)
     let state = ('force-unwrap state)
