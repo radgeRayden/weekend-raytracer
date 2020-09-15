@@ -24,6 +24,7 @@ import .threads
 THREAD_COUNT := 3
 
 ENABLE_VISUAL_PROFILING? := false
+MAX_BOUNCES     := 50
 
 # change this to average the scene over time
 TOTAL_FRAMES    := 1
@@ -93,26 +94,28 @@ global material3 = ('add-material world (MetallicM (vec3 0.7 0.6 0.5) 0.0))
 'emplace-append world.objects
     SphereH (vec3 4 1 0) 1.0 material3
 
-fn ray-color (r depth rng)
-    if (depth >= unroll-limit)
-        return (vec3)
-
-    let hit? record = ('hit? world.objects r 0.001 Inf)
-    if hit?
-        mat := ('material world record.mat)
-        let scattered? sray attenuation = ('scatter mat r record rng)
-        if scattered?
-            copy
-                attenuation * (this-function sray (depth + 1) rng)
-        else
-            (vec3)
-    else
-        n := (normalize r.direction)
-        t := 0.5 * (n.y + 1)
-        mix (vec3 1) (vec3 0.5 0.7 1) t
-
 fn color (uv rng)
-    vec4 (ray-color ('ray cam uv rng) 0 rng) 1
+    vvv bind ray-color
+    loop (r color bounces = ('ray cam uv rng) (vec3 1) 0)
+        if (bounces >= MAX_BOUNCES)
+            break (vec3)
+
+        let hit? record = ('hit? world.objects r 0.001 Inf)
+        if hit?
+            mat := ('material world record.mat)
+            let scattered? sray attenuation = ('scatter mat r record rng)
+            if scattered?
+                _ sray (attenuation * color) (bounces + 1)
+            else
+                # didn't arrive at where we're looking at;
+                # remember we're tracing the path in reverse.
+                break (vec3)
+        else
+            n := (normalize r.direction)
+            t := 0.5 * (n.y + 1)
+            break
+                color * (mix (vec3 1) (vec3 0.5 0.7 1) t)
+    vec4 ray-color 1
 
 global profile-heatmap : (Array f32 (FB_WIDTH * FB_HEIGHT))
 'resize profile-heatmap ('capacity profile-heatmap)
