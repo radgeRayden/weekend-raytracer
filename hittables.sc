@@ -1,4 +1,4 @@
-using import radlib.core-extensions
+using import core-extensions
 
 using import .materials
 using import .utils

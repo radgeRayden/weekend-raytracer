@@ -2,6 +2,7 @@ using import Array
 using import glm
 using import struct
 
+import .radlib.use
 import .raydEngine.use
 import app
 import HID

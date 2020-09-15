@@ -1,3 +1,6 @@
 [submodule "raydEngine"]
 	path = raydEngine
 	url = git@github.com:radgeRayden/raydEngine.git
+[submodule "radlib"]
+	path = radlib
+	url = git@github.com:radgeRayden/radlib.git

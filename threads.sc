@@ -1,5 +1,5 @@
 # quick and (very) dirty wrapper for pthreads
-using import radlib.libc
+using import libc
 
 fn... spawn (closure : (pointer (function voidstar voidstar)), user-arg)
     local thread : pthread.t
