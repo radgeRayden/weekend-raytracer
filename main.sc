@@ -113,8 +113,6 @@ fn color (uv rng)
                 color * (mix (vec3 1) (vec3 0.5 0.7 1) t)
     vec4 ray-color 1
 
-global profile-heatmap : (Array f32 (FB_WIDTH * FB_HEIGHT))
-'resize profile-heatmap ('capacity profile-heatmap)
 global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
 'resize color-buffer ('capacity color-buffer)
 
