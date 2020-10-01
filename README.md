@@ -5,4 +5,4 @@ The output looks almost exactly as the reference implementation:
 
 It took 7 hours to render on my i7-5500U using 4 threads.
 
-To run it, it's necessary to initialize submodules recursively, run `make` in `raydEngine/foreign` and have `radlib` in your `scopes/lib/scopes` folder. Honestly I didn't put much effort in making it easy to run outside my machine, sorry! (also only linux supported atm).
+To run it, it's necessary to initialize submodules recursively, run `make; make install` in `raydEngine/foreign` and have `radlib` in your `scopes/lib/scopes` folder. Honestly I didn't put much effort in making it easy to run outside my machine, sorry! (also only linux supported atm).
