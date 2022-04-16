@@ -17,7 +17,7 @@ using import .scene
 import .threads
 import .display
 
-THREAD_COUNT := 4
+THREAD_COUNT := 12
 
 RT_SAMPLE_COUNT := 500
 MAX_BOUNCES     := 50
@@ -112,20 +112,41 @@ fn color (uv rng)
 global color-buffer : (Array vec4 (FB_WIDTH * FB_HEIGHT))
 'resize color-buffer ('capacity color-buffer)
 
-fn render-row (row rng)
+inline render-pixel (x y rng)
     scale := 1.0 / RT_SAMPLE_COUNT
-    for x in (range FB_WIDTH)
-        vvv bind color-result
-        fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
-            let uv =
-                /
-                    (vec2 x row) + (vec2 ('normalized rng) ('normalized rng))
-                    (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
-            color-result + (color uv rng)
+    vvv bind color-result
+    fold (color-result = (vec4)) for i in (range RT_SAMPLE_COUNT)
+        let uv =
+            /
+                (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
+                (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+        color-result + (color uv rng)
 
-        color-result := color-result * scale
-        idx := row * FB_WIDTH + x
-        color-buffer @ idx = color-result
+    color-result := color-result * scale
+    idx := y * FB_WIDTH + x
+    color-buffer @ idx = color-result
+
+inline render-pixel-avg (x y samples rng)
+    samples as:= f32
+    let uv =
+        /
+            (vec2 x y) + (vec2 ('normalized rng) ('normalized rng))
+            (vec2 (FB_WIDTH - 1) (FB_HEIGHT - 1))
+    let this-sample = (color uv rng)
+
+    idx := y * FB_WIDTH + x
+    accumulated := color-buffer @ idx
+    color-result := ((accumulated * samples) + this-sample) / (samples + 1)
+    color-buffer @ idx = color-result
+
+fn render-row (row rng)
+    for x in (range FB_WIDTH)
+        render-pixel x row rng
+
+inline render-rect (x y w h iter rng)
+    using import itertools
+    for _x _y in (dim w h)
+        render-pixel-avg (x + _x) (y + _y) iter rng
 
 global clock : timer.Timer
 
@@ -140,9 +161,29 @@ fn init ()
                 fn (arg)
                     # in lieu of a proper jump function
                     local rng : PRNG.random.Xoshiro256+ (i * 1000)
-                    for y in (range FB_HEIGHT)
-                        if ((y % THREAD_COUNT) == i)
-                            render-row y rng
+                    # for y in (range FB_HEIGHT)
+                    #     if ((y % THREAD_COUNT) == i)
+                    #         render-row y rng
+
+                    inline ceil (x)
+                        let f = (floor x)
+                        if (f < x)
+                            f + 1.0
+                        else
+                            f 
+
+                    let TILE_SIZE = 16
+                    let rows = ((ceil (FB_HEIGHT / TILE_SIZE)) as u32)
+                    let columns = ((ceil (FB_WIDTH / TILE_SIZE)) as u32)
+                    using import itertools
+                    for iter in (range RT_SAMPLE_COUNT)
+                        for _i x y in (enumerate (dim columns rows))
+                            if ((_i % THREAD_COUNT) == i)
+                                let w h =
+                                    (min ((x * TILE_SIZE) + TILE_SIZE) FB_WIDTH) - (x * TILE_SIZE)
+                                    (min ((y * TILE_SIZE) + TILE_SIZE) FB_HEIGHT) - (y * TILE_SIZE)
+                                render-rect (x * TILE_SIZE) (y * TILE_SIZE) w h iter rng
+
                     print "thread" i "done in" ('run-time-real clock) "seconds"
                     null as voidstar
                 null
