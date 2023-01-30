@@ -1,9 +1,9 @@
-using import core-extensions
 using import enum
 using import struct
 using import glm
 
 using import .utils
+using import .extensions
 
 struct LambertianM
     albedo : vec3

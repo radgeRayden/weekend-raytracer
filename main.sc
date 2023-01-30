@@ -2,12 +2,7 @@ using import Array
 using import glm
 using import struct
 
-import .radlib.use
-import .raydEngine.use
-import app
-import HID
-import PRNG
-import timer
+import bottle
 
 using import .utils
 using import .materials
@@ -16,6 +11,7 @@ using import .camera
 using import .scene
 import .threads
 import .display
+import .PRNG
 
 THREAD_COUNT := 12
 
@@ -148,11 +144,17 @@ inline render-rect (x y w h iter rng)
     for _x _y in (dim w h)
         render-pixel-avg (x + _x) (y + _y) iter rng
 
-global clock : timer.Timer
+@@ 'on bottle.configure
+fn (cfg)
+    cfg.window.title = "my little raytracer"
+    cfg.window.width = FB_WIDTH
+    cfg.window.height = FB_HEIGHT
 
-fn init ()
+global start-time : f64
+@@ 'on bottle.load
+fn ()
     display.init FB_WIDTH FB_HEIGHT
-    clock = (timer.Timer) # start counting from now
+    start-time = (bottle.timer.get-time)
 
     # dispatch work
     va-map
@@ -184,17 +186,16 @@ fn init ()
                                     (min ((y * TILE_SIZE) + TILE_SIZE) FB_HEIGHT) - (y * TILE_SIZE)
                                 render-rect (x * TILE_SIZE) (y * TILE_SIZE) w h iter rng
 
-                    print "thread" i "done in" ('run-time-real clock) "seconds"
+                    end-time := (bottle.timer.get-time)
+                    print "thread" i "done in" (end-time - start-time) "seconds"
                     null as voidstar
                 null
         va-range THREAD_COUNT
     ;
 
-fn update (dt)
-    ;
-
-fn draw (cmd-encoder render-pass)
+@@ 'on bottle.draw
+fn (render-pass)
     display.update render-pass (view color-buffer)
     ;
 
-app.run init update draw
+bottle.run;

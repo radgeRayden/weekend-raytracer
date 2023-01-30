@@ -3,8 +3,7 @@ using import struct
 using import Rc
 using import enum
 using import Option
-import .raydEngine.use
-import PRNG
+import .PRNG
 
 struct Ray plain
     origin    : vec3
