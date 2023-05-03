@@ -1,0 +1,2150 @@
+#!/usr/bin/env python3
+
+"""
+Major EO - Project Oriented Package Management
+
+Copyright (C) 2022, 2023 Leonard Ritter.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"""
+
+import types
+import sys
+import os
+import re
+import argparse
+import collections
+import tempfile
+import time
+import math
+import urllib
+import urllib.request
+import urllib.parse
+import ssl
+import shutil
+import hashlib
+import configparser
+import sysconfig
+import glob
+import subprocess
+import shlex
+
+VERSION = "0.14"
+
+PROJECT_CONFIG_DIR = "/.eo"
+PROJECT_RECIPE_DIR = "/recipes"
+PROJECT_INSTALL_STATE_DIR = PROJECT_CONFIG_DIR + "/installed"
+
+# some urls to make bootstrapping easier
+PRESET_IMPORT_URLS = {
+    "majoreo" : "https://hg.sr.ht/~duangle/majoreo/raw/extras/recipes/majoreo.eo?rev=tip",
+    "scopes" : "https://hg.sr.ht/~duangle/scopes/raw/extras/eo/scopes.eo?rev=tip"
+}
+
+RECIPE_WARNING = \
+"""Warning: you're importing a recipe from an unknown source. The recipe may
+potentially be malicious and will be able to execute system commands with user
+privileges. Only continue if you trust the source of this recipe.
+"""
+
+def print_program_header():
+    print("Major EO - Project Oriented Package Management")
+    print("Version",VERSION)
+    print("http://majoreo.rocks")
+    print()
+
+################################################################################
+
+IS_WIN32 = (sys.platform == "win32")
+IS_MINGW = False
+if IS_WIN32 and sysconfig.get_platform().startswith("mingw"):
+    IS_MINGW = True
+if IS_WIN32:
+    TAR_CMD = "tar --force-local"
+else:
+    TAR_CMD = "tar"
+
+################################################################################
+
+def user_confirmation(prompt = "continue?"):
+    confirm = input(prompt + " [y/N] ").lower()
+    if confirm != "y":
+        error("aborted")
+
+def memoize(f):
+    memo = {}
+    def helper(*args):
+        if args not in memo:
+            memo[args] = f(*args)
+        return memo[args]
+    return helper
+
+# query number of CPU cores
+def get_num_cpu_cores():
+    return os.cpu_count()
+    #return len(os.sched_getaffinity(0))
+
+def verify_dir(cwd):
+    cwd = os.path.realpath(cwd)
+    if not os.path.isdir(cwd):
+        error("no such directory: {}", cwd)
+    return cwd
+
+def shell(cmd, retry=1, silent=False, capture=False):
+    for i in range(retry):
+        if not silent:
+            if i == 0:
+                print(cmd)
+            else:
+                print('attempt #{}: {}'.format(i+1,cmd))
+        # run shell command and return output
+        if capture:
+            try:
+                output = subprocess.check_output(cmd, stderr=subprocess.STDOUT,
+                    encoding = "utf-8", universal_newlines = True, shell = True)
+                return output.strip()
+            except subprocess.CalledProcessError as e:
+                print(e.output)
+                pass
+        else:
+            result = os.system(cmd)
+            if result == 0:
+                return True
+        if retry > 1:
+            print("Failed, retrying...")
+            time.sleep(1)
+    error("shell command failed")
+
+def gen_rotator():
+    while True:
+        for c in '|/-\\':
+            yield c
+
+last_print_r_width = 0
+def print_r(text):
+    global last_print_r_width
+    text = text.rstrip('\n \t')
+    sys.stdout.write('\r' + text + ' '*last_print_r_width)
+    sys.stdout.flush()
+    last_print_r_width = len(text)
+
+# lifehack
+if hasattr(ssl, '_create_unverified_context'):
+    ssl._create_default_https_context = ssl._create_unverified_context
+
+def download_tempfile(url, filename, remove_stale = True, filepath = None, silent=False):
+    if filepath:
+        tempfilepath = filepath
+    else:
+        tempdir = tempfile.mkdtemp("eo")
+        tempfilepath = os.path.join(tempdir, filename)
+    if not silent:
+        print("downloading {0} to {1}...".format(url,tempfilepath))
+    if os.path.isfile(tempfilepath):
+        if remove_stale:
+            if not silent:
+                print("removing stale {0}".format(tempfilepath))
+            os.remove(tempfilepath)
+        else:
+            return tempfilepath
+    rotator = gen_rotator()
+    def reporthook(count,blocksize,totalsize):
+        if not silent:
+            perc = min(count * blocksize, totalsize) * 100.0 / totalsize
+            numchars = int(perc / 100.0 * 30.0)
+            msg = '{0} [{1}{2}] {3:.2f}%'.format(next(rotator), '='*numchars, ' '*(30-numchars), perc)
+            print_r(msg)
+            sys.stdout.flush()
+    try:
+        urllib.request.urlretrieve(url, tempfilepath, reporthook)
+    except:
+        if os.path.isfile(tempfilepath):
+            os.remove(tempfilepath)
+        raise
+    if not silent:
+        print_r("done.")
+        print()
+    return tempfilepath
+
+# extract filename from URL
+def url_filename(url):
+    return os.path.basename(urllib.parse.urlparse(url)[2])
+
+def copyovertree(src, dst, symlinks=False, ignore=None):
+    names = os.listdir(src)
+    if ignore is not None:
+        ignored_names = ignore(src, names)
+    else:
+        ignored_names = set()
+
+    if not os.path.isdir(dst):
+        os.makedirs(dst)
+    errors = []
+    for name in names:
+        if name in ignored_names:
+            continue
+        srcname = os.path.join(src, name)
+        dstname = os.path.join(dst, name)
+        try:
+            if symlinks and os.path.islink(srcname):
+                linkto = os.readlink(srcname)
+                if os.path.isfile(dstname):
+                    os.remove(dstname)
+                os.symlink(linkto, dstname)
+            elif os.path.isdir(srcname):
+                copyovertree(srcname, dstname, symlinks, ignore)
+            else:
+                # Will raise a SpecialFileError for unsupported file types
+                shutil.copy2(srcname, dstname)
+        # catch the Error from the recursive copytree so that we can
+        # continue with other files
+        except shutil.Error as err:
+            errors.extend(err.args[0])
+        except EnvironmentError as why:
+            errors.append((srcname, dstname, str(why)))
+    try:
+        shutil.copystat(src, dst)
+    except OSError as why:
+        if shutil.WindowsError is not None and isinstance(why,
+            shutil.WindowsError):
+            # Copying file access times may fail on Windows
+            pass
+        else:
+            errors.extend((src, dst, str(why)))
+    if errors:
+        raise shutil.Error(errors)
+
+def copytree(srcpath, dstpath, ignore_files=[], ignore_func=None):
+    if ignore_func is None:
+        ignore_func = shutil.ignore_patterns(*ignore_files)
+
+    def ignore_func_ex(dirpath, fnames):
+        #print(dirpath)
+        return ignore_func(dirpath, fnames)
+
+    print("copying",srcpath,"=>",dstpath)
+    copyovertree(srcpath, dstpath, symlinks=True, ignore=ignore_func_ex)
+
+# MSYS compatibility
+################################################################################
+
+MINGW_PATH = ""
+if IS_MINGW:
+    MINGW_PATH = os.path.realpath(os.path.join(os.path.dirname(sys.executable), ".."))
+
+################################################################################
+
+class Symbol:
+    def __init__(self):
+        pass
+
+    def __repr__(self):
+        return self.string
+
+    @classmethod
+    def new(cls, text):
+        assert(type(text) == str)
+        self = cls()
+        self.string = text
+        return self
+
+@memoize
+def symbol(str):
+    return Symbol.new(str)
+
+class Symbols:
+    CurlyList = symbol('curly-list')
+    SquareList = symbol('square-list')
+    DictSeparator = symbol(':')
+    DictBinder = symbol('=')
+    Plain = symbol('plain')
+
+################################################################################
+
+class Token:
+    Empty = -1
+    EOF = 0
+    Open = '('
+    Close = ')'
+    SquareOpen = '['
+    SquareClose = ']'
+    CurlyOpen = '{'
+    CurlyClose = '}'
+    String = '"'
+    BlockString = 'B'
+    Quote = '\''
+    Symbol = 'S'
+    Escape = '\\'
+    Separator = ';'
+    Integer = 'I'
+    Real = 'F'
+
+TOKEN_TERMINATORS = "()[]{}\"';#,"
+
+integer_literal_suffixes = set("i8 i16 i32 i64 u8 u16 u32 u64 usize".strip().split())
+real_literal_suffixes = set("f32 f64".strip().split())
+
+def isspace(c):
+    return c in ' \t\n\r'
+
+def parse_hexchar(c):
+    if (c >= '0') and (c <= '9'):
+        return ord(c) - ord('0')
+    elif (c >= 'a') and (c <= 'f'):
+        return ord(c) - ord('a') + 10
+    elif (c >= 'A') and (c <= 'F'):
+        return ord(c) - ord('A') + 10
+    else:
+        return -1
+
+def unescape_string (buf):
+    dst = ""
+    src = 0
+    l = len(buf)
+    while src < l:
+        c = buf[src]
+        if c == '\\' and ((src+1) < l):
+            c = buf[src+1]
+            if c == 'n':
+                dst += '\n'
+                src += 2
+                continue
+            elif c == 't':
+                dst += '\t'
+                src += 2
+                continue
+            elif c == 'r':
+                dst += '\r'
+                src += 2
+                continue
+            elif c == '"':
+                dst += '"'
+                src += 2
+                continue
+            elif c == '\n':
+                src += 2
+                # skip until next non whitespace character
+                while src < l:
+                    c = buf[src]
+                    if c in ' \t':
+                        src += 1
+                    else:
+                        break
+                continue
+            elif c == 'x' and ((src+3) < l):
+                c0 = parse_hexchar(buf[src+2])
+                c1 = parse_hexchar(buf[src+3])
+                if (c0 >= 0) and (c1 >= 0):
+                    dst += chr((c0 << 4) | c1)
+                    src += 3
+                    continue
+        dst += c
+        src += 1
+    return dst
+
+class Lexer:
+    def __init__ (self):
+        self.cursor = 0
+        self.next_cursor = 0
+        self.lineno = 1
+        self.next_lineno = 1
+        self.line = 0
+        self.next_line = 0
+
+    def column(self):
+        return self.cursor - self.line + 1
+
+    def next_column(self):
+        return self.next_cursor - self.next_line + 1
+
+    def get_string(self):
+        return unescape_string(self.value[1:-1])
+
+    def get_block_string(self):
+        strip_col = self.column() + 4
+        buf = self.value
+        dest = ""
+        start = 4
+        end = len(buf)
+        assert (end >= 0)
+        # strip trailing whitespace up to the first LF after content
+        last_lf = end
+        while end != start:
+            c = buf[end - 1]
+            if not isspace(c):
+                break
+            if c == '\n':
+                last_lf = end
+            end -= 1
+        end = last_lf
+        while start != end:
+            c = buf[start]
+            start += 1
+            dest += c
+            if c == '\n':
+                # strip leftside column
+                for i in range(1, strip_col):
+                    if start == end:
+                        break
+                    if (buf[start] != ' ') and (buf[start] != '\t'):
+                        break
+                    start += 1
+        return (Symbols.Plain, dest)
+
+    def get_symbol(self):
+        return symbol(self.value)
+
+    def get_integer(self):
+        return int(self.value)
+
+    def get_real(self):
+        return float(self.value)
+
+    def tokenize(state, text):
+        state.buffer = text
+
+        def location_error(msg):
+            print(text)
+            raise Exception("%i:%i: error: %s" % (state.lineno,state.column(),msg))
+
+        def is_eof():
+            return state.next_cursor == len(text)
+
+        def chars_left():
+            return len(text) - state.next_cursor
+
+        def next():
+            x = text[state.next_cursor]
+            state.next_cursor = state.next_cursor + 1
+            return x
+
+        def next_token():
+            state.lineno = state.next_lineno
+            state.line = state.next_line
+            state.cursor = state.next_cursor
+
+        def newline():
+            state.next_lineno = state.next_lineno + 1
+            state.next_line = state.next_cursor
+
+        def select_string():
+            state.value = text[state.cursor:state.next_cursor]
+
+        def reset_cursor():
+            state.next_cursor = state.cursor
+
+        def try_fmt_split(s):
+            l = s.split(':')
+            if len(l) == 2:
+                return l
+            else:
+                return s,None
+
+        def is_integer(s):
+            tail = None
+            if ':' in s:
+                s,tail = try_fmt_split(s)
+            if tail and not (tail in integer_literal_suffixes):
+                return False
+            if not s:
+                return False
+            if s[0] in '+-':
+                s = s[1:]
+            nums = '0123456789'
+            if s.startswith('0x'):
+                nums = nums + 'ABCDEFabcdef'
+                s = s[2:]
+            elif s.startswith('0b'):
+                nums = '01'
+                s = s[2:]
+            elif len(s) > 1 and s[0] == '0':
+                return False
+            if len(s) == 0:
+                return False
+            for k,c in enumerate(s):
+                if not c in nums:
+                    return False
+            return True
+
+        def is_real(s):
+            tail = None
+            if ':' in s:
+                s,tail = try_fmt_split(s)
+            if tail and not (tail in real_literal_suffixes):
+                return False
+            if not s: return False
+            if s[0] in '+-':
+                s = s[1:]
+            if s == 'inf' or s == 'nan':
+                return True
+            nums = '0123456789'
+            if s.startswith('0x'):
+                nums = nums + 'ABCDEFabcdef'
+                s = s[2:]
+            if len(s) == 0:
+                return False
+            for k,c in enumerate(s):
+                if c == 'e':
+                    return is_integer(s[k + 1:])
+                if c == '.':
+                    s = s[k + 1:]
+                    for k,c in enumerate(s):
+                        if c == 'e':
+                            return is_integer(s[k + 1:])
+                        if not c in nums:
+                            return False
+                    break
+                if not c in nums:
+                    return False
+            return True
+
+        def read_symbol():
+            escape = False
+            while True:
+                if is_eof():
+                    break
+                c = next()
+                if escape:
+                    if c == '\n':
+                        newline()
+                    escape = False
+                elif c == '\\':
+                    escape = True
+                elif isspace(c) or (c in TOKEN_TERMINATORS):
+                    state.next_cursor = state.next_cursor - 1
+                    break
+            select_string()
+
+        def read_string(terminator):
+            escape = False
+            while True:
+                if is_eof():
+                    location_error("unterminated sequence")
+                    break
+                c = next()
+                if c == '\n' and not escape:
+                    # 0.10
+                    # newline()
+                    # 0.11
+                    location_error("unexpected line break in string")
+                    break
+                if escape:
+                    escape = False
+                elif c == '\\':
+                    escape = True
+                elif c == terminator:
+                    break
+            select_string()
+
+        def read_block(indent):
+            col = state.column() + indent
+            while True:
+                if is_eof():
+                    break
+                next_col = state.next_column()
+                c = next()
+                if c == '\n':
+                    newline()
+                elif not isspace(c) and (next_col <= col):
+                    state.next_cursor = state.next_cursor - 1
+                    break
+            select_string()
+
+        def read_block_string():
+            next()
+            next()
+            next()
+            read_block(3)
+
+        def read_comment():
+            read_block(0)
+
+        def read_whitespace():
+            while True:
+                if is_eof():
+                    break
+                c = next()
+                if c == '\n':
+                    newline()
+                elif not isspace(c):
+                    state.next_cursor = state.next_cursor - 1
+                    break
+            select_string()
+
+        while True:
+            next_token()
+            if is_eof():
+                yield Token.EOF
+                return
+            c = next()
+            cur = state.cursor
+            if c == '\n':
+                newline()
+            if isspace(c):
+                read_whitespace()
+                continue
+            elif c == '#':
+                #token = Token.Comment
+                read_comment()
+                continue
+            elif c == '(':
+                token = Token.Open
+                select_string()
+            elif c == ')':
+                token = Token.Close
+                select_string()
+            elif c == '[':
+                token = Token.SquareOpen
+                select_string()
+            elif c == ']':
+                token = TokenSquareClose
+                select_string()
+            elif c == '{':
+                token = Token.CurlyOpen
+                select_string()
+            elif c == '}':
+                token = Token.CurlyClose
+                select_string()
+            elif c == '\\':
+                token = Token.Escape
+                select_string()
+            elif c == '"':
+                token = Token.String
+                if ((chars_left() >= 3)
+                    and (text[state.next_cursor+0] == '"')
+                    and (text[state.next_cursor+1] == '"')
+                    and (text[state.next_cursor+2] == '"')):
+                    token = Token.BlockString
+                    read_block_string()
+                else:
+                    read_string(c)
+            elif c == ';':
+                token = Token.Separator
+                select_string()
+            elif c == '\'':
+                token = Token.Symbol
+                read_symbol()
+            elif c == ',':
+                token = Token.Symbol
+                select_string()
+            else:
+                read_symbol()
+                if is_integer(state.value):
+                    token = Token.Integer
+                elif is_real(state.value):
+                    token = Token.Real
+                else:
+                    token = Token.Symbol
+            yield token
+
+class ListBuilder:
+    def __init__ (self):
+        self.prev = []
+        self.eol = 0
+
+    def append (self, value):
+        self.prev.append(value)
+
+    def is_empty(self):
+        return len(self.prev) == 0
+
+    def reset_start(self):
+        self.eol = len(self.prev)
+
+    def split(self, anchor):
+        self.prev = [tuple(self.prev[:self.eol])]
+        self.reset_start()
+
+    def get_result(self):
+        return tuple(self.prev)
+
+_active_anchor = None
+def trace(anchor):
+    global _active_anchor
+    _active_anchor = anchor
+
+class EOError(Exception):
+    def __init__(self, msg):
+        self.history = []
+        self.msg = msg
+
+    def print(self):
+        for msg in self.history:
+            print(msg)
+        print("error: " + self.msg)
+
+    def append(self, msg):
+        self.history.append(msg)
+
+def error(msg, *args):
+    raise EOError(msg.format(*args))
+
+def tag(anchor, obj):
+    return obj
+
+class Parser:
+    def __init__(self, text):
+        self.state = Lexer()
+        self.tokenizer = self.state.tokenize(text)
+
+    def anchor (self):
+        pass
+
+    def read_token (self):
+        self.token = next(self.tokenizer)
+
+    def trace (self, anchor):
+        pass
+
+    # parses a list to its terminator and returns a handle to the first cell
+    def parse_list (self, end_token):
+        start_anchor = self.anchor()
+        builder = ListBuilder()
+        self.read_token()
+        while True:
+            token = self.token
+            if token == end_token:
+                break
+            elif token == Token.Escape:
+                column = self.state.column()
+                self.read_token()
+                builder.append(self.parse_naked(column, end_token))
+            elif token == Token.EOF:
+                trace(self.anchor())
+                error("format: parenthesis never closed\n{} opened here", start_anchor)
+            elif token == Token.Separator:
+                builder.split(self.anchor())
+                self.read_token()
+            else:
+                builder.append(self.parse_any())
+                self.read_token()
+        return builder.get_result()
+
+    # parses the next sequence and returns it wrapped in a cell that points to prev
+    def parse_any(self):
+        assert self.token != Token.EOF
+        anchor = self.anchor()
+        if self.token == Token.Open:
+            return tag(anchor, self.parse_list(Token.Close))
+        elif self.token == Token.SquareOpen:
+            return tag(anchor, [tag(anchor, Symbols.SquareList)] +
+                    self.parse_list(Token.SquareClose))
+        elif self.token == Token.CurlyOpen:
+            return tag(anchor, [tag(anchor, Symbols.CurlyList)] +
+                    self.parse_list(Token.CurlyClose))
+        elif self.token in (Token.Close, Token.SquareClose, Token.CurlyClose):
+            trace(self.anchor())
+            error("format: stray closing bracket")
+        elif self.token == Token.String:
+            return tag(anchor, self.state.get_string())
+        elif self.token == Token.BlockString:
+            return tag(anchor, self.state.get_block_string())
+        elif self.token == Token.Symbol:
+            return tag(anchor, self.state.get_symbol())
+        elif self.token == Token.Integer:
+            return tag(anchor, self.state.get_integer())
+        elif self.token == Token.Real:
+            return tag(anchor, self.state.get_real())
+        else:
+            trace(anchor)
+            error("format: unexpected token '{}' ({})",
+                self.state.buffer[self.state.cursor],
+                ord(self.state.buffer[self.state.cursor]))
+
+    def parse_naked(self, column, end_token):
+        lineno = self.state.lineno
+        escape = False
+        subcolumn = 0
+
+        anchor = self.anchor()
+        builder = ListBuilder()
+
+        unwrap_single = True
+        while self.token != Token.EOF:
+            if self.token == end_token:
+                break
+            elif self.token == Token.Escape:
+                escape = True
+                self.read_token()
+                if self.state.lineno <= lineno:
+                    trace(self.anchor())
+                    error("format: list continuation character must be at beginning or end of sublist line")
+                lineno = self.lineno
+            elif self.state.lineno > lineno:
+                if subcolumn == 0:
+                    subcolumn = self.state.column()
+                elif self.state.column() != subcolumn:
+                    trace(self.anchor())
+                    error("format: indentation mismatch")
+                elif column != subcolumn:
+                    if (column + 4) != subcolumn:
+                        trace(self.anchor())
+                        error("format: indentations must nest by 4 spaces")
+
+                escape = False
+                lineno = self.state.lineno
+                # keep adding elements while we're in the same line
+                while ((self.token != Token.EOF)
+                        and (self.token != end_token)
+                        and (self.state.lineno == lineno)):
+                    builder.append(self.parse_naked(subcolumn, end_token))
+            elif self.token == Token.Separator:
+                self.read_token()
+                unwrap_single = False
+                if not builder.is_empty():
+                    break
+            else:
+                builder.append(self.parse_any())
+                lineno = self.state.next_lineno
+                self.read_token()
+            if (((not escape) or (self.state.lineno > lineno))
+                and (self.state.column() <= column)):
+                break
+
+        result = builder.get_result()
+        if unwrap_single and result and len(result) == 1:
+            return result[0]
+        else:
+            return tag(anchor, result)
+
+    def parse(self):
+        self.read_token()
+        lineno = 0
+
+        anchor = self.anchor()
+        builder = ListBuilder()
+
+        while self.token != Token.EOF:
+            if self.token == Token.Empty:
+                break;
+            elif self.token == Token.Escape:
+                self.read_token()
+                if self.lineno <= lineno:
+                    trace(self.anchor())
+                    error("format: list continuation character must be at beginning or end of sublist line")
+                lineno = self.lineno
+            elif self.state.lineno > lineno:
+                if self.state.column() != 1:
+                    trace(self.anchor())
+                    error("format: indentation mismatch")
+                lineno = self.state.lineno
+                # keep adding elements while we're in the same line
+                while ((self.token != Token.EOF)
+                        and (self.token != Token.Empty)
+                        and (self.state.lineno == lineno)):
+                    builder.append(self.parse_naked(1, Token.Empty))
+            elif self.token == Token.Separator:
+                trace(self.anchor())
+                error("format: unexpected list separation character")
+            else:
+                builder.append(self.parse_any())
+                lineno = self.next_lineno
+                self.read_token()
+        return tag(anchor, builder.get_result())
+
+# AST
+################################################################################
+
+class Macro:
+    def __init__(self, name, func, closure = False):
+        self.name = name
+        self.func = func
+        self.closure = closure
+
+    def __repr__(self):
+        return "<{}>".format(self.name)
+
+class Builtin:
+    def __init__(self, name, func = None, static = False):
+        self.name = name
+        self.func = func
+        self.static = static
+
+    def __call__(self, *args):
+        assert self.func, self.name + " not implemented"
+        return self.func(*args)
+
+    def __repr__(self):
+        return "<{}>".format(self.name)
+
+class WrappedDict:
+    def __init__(self, dict):
+        self.dict = dict
+
+    def __repr__(self):
+        return repr(self.dict)
+
+def builtin_dict(ee, wdict):
+    env = {}
+    for k,v in wdict.dict.items():
+        k = eval_expr(ee, k)
+        v = eval_expr(ee, v)
+        env[k] = v
+    return WrappedDict(env)
+builtin_dict = Builtin("dict", builtin_dict)
+
+def macro_dict(env, expr):
+    result = {}
+    for entry in expr[1:]:
+        if len(entry) == 3:
+            if entry[1] == Symbols.DictBinder:
+                key = entry[0]
+                if isinstance(key, Symbol):
+                    env,value = expand_expr(env, entry[2])
+                    result[key.string] = value
+                    continue
+                else:
+                    error("name must be a symbol, not {}", type(key))
+            elif entry[1] == Symbols.DictSeparator:
+                env,key = expand_expr(env, entry[0])
+                env,value = expand_expr(env, entry[2])
+                result[key] = value
+                continue
+        env,val = expand_expr(env, entry)
+        if val != ():
+            error("`key : value` or `name = value` expected")
+    return env,(builtin_dict, WrappedDict(result))
+
+class Tempdir(Builtin):
+    def __init__(self):
+        self.name = "tempdir"
+        self.static = False
+
+    def __call__(self, ee, *args):
+        dirpath = tempfile.mkdtemp("_eo_user")
+        ee.tempdirs.append(dirpath)
+        return dirpath
+
+class Tempfile(Builtin):
+    def __init__(self):
+        self.name = "tempfile"
+        self.static = False
+
+    def __call__(self, ee, string):
+        with tempfile.NamedTemporaryFile(suffix="_eo_user",delete=False) as f:
+            filepath = f.name
+            f.write(string.encode('utf-8'))
+        ee.tempfiles.append(filepath)
+        return filepath
+
+def macro_tempdir(env, expr):
+    return env,(Tempdir(),)
+
+def macro_tempfile(env, expr):
+    env, expr = expand_expr(env, expr[1])
+    return env,(Tempfile(),expr)
+
+def macro_plain(env, expr):
+    arg = expr[1]
+    if type(arg) != str:
+        error("plain: expected string, not " + repr(type(arg)))
+    return env,arg
+
+def macro_fn(env, expr):
+    # syntax: macro <name> (<arg> ...) <body>
+    name = expr[1]
+    autobind = True
+    if type(name) == str:
+        autobind = False
+        name = symbol(name)
+    if not isinstance(name, Symbol):
+        error("macro: expected symbol for function name, not " + repr(type(name)))
+    params = expr[2]
+    if type(params) != tuple:
+        error("macro: expected tuple of arguments, not " + repr(type(params)))
+    for param in params:
+        if not isinstance(param, Symbol):
+            error("macro: expected symbol for parameter, not " + repr(type(param)))
+    body = expr[3]
+    typename = "fn " + name.string + " (" + " ".join(param.string for param in params) + ")"
+    macro_env = env
+    orig_env = macro_env
+    def func (env, expr):
+        args = expr[1:]
+        env,args = expand_args(env,args)
+        if len(args) != len(params):
+            error("{}: expected {} arguments, not {}", typename, len(params), len(args))
+        body_env = macro_env
+        for param,arg in zip(params,args):
+            body_env = env_bind(body_env, param, arg)
+        body_env,result = expand_expr(body_env, body)
+        return env,result
+    macro = Macro(typename, func, closure=True)
+    if autobind:
+        env = env_bind(env,name,macro)
+    return env,macro
+
+def builtin_join (ee, *args):
+    return ''.join([str(arg) for arg in args])
+
+def builtin_download (ee, url):
+    raw_filename = url_filename(url)
+    hashed_name = hashlib.sha224(url.encode('utf-8')).hexdigest()
+    filename = hashed_name + "_" + raw_filename
+    dlcachedir = ee.package.dlcachepath
+    os.makedirs(dlcachedir, exist_ok=True)
+    filepath = os.path.join(dlcachedir, filename)
+    return download_tempfile(url, "",
+        remove_stale = ee.package.always_sync(),
+        filepath = filepath)
+
+def builtin_extract (ee, archivepath):
+    print("extracting {}".format(archivepath))
+    tempdir = tempfile.mkdtemp("_eo_archive")
+    # extract file extension of archive path
+    ext = os.path.splitext(archivepath)[1]
+    if ext == ".zip": # also use unzip on MINGW
+        shell("unzip \"{}\" -d {}".format(archivepath, tempdir))
+    elif archivepath.endswith(".tar.zst"):
+        shell("unzstd --stdout \"{}\" | {} -xf - -C {}".format(archivepath, TAR_CMD, tempdir))
+    else:
+        shell("{} -xf \"{}\" -C {}".format(TAR_CMD, archivepath, tempdir))
+    ee.tempdirs.append(tempdir)
+    return tempdir
+
+def builtin_commonpath (ee, path):
+    return os.path.commonpath(
+        [os.path.join(path, filename) for filename in os.listdir(path)])
+
+def builtin_mkdir(ee, path):
+    os.makedirs(path, exist_ok=False)
+    return path
+
+def builtin_download_svn(ee, url, revision):
+    hashed_name = hashlib.sha224((url + "/" + revision).encode('utf-8')).hexdigest()
+    filename = hashed_name + ".tar.gz"
+    dlcachedir = ee.package.dlcachepath
+    os.makedirs(dlcachedir, exist_ok=True)
+    filepath = os.path.join(dlcachedir, filename)
+    if ee.package.always_sync() or not os.path.isfile(filepath):
+        tempdir = tempfile.mkdtemp("_eo_svn") + "/export"
+        shell('svn export -q -r {} {} {}'.format(revision, url, tempdir))
+        shell("{} -czf {} -C {} .".format(TAR_CMD, filepath, tempdir))
+        shutil.rmtree(tempdir)
+    return filepath
+
+class Shell(Builtin):
+    def __init__(self, cwd, env, capture = False):
+        self.name = "shell"
+        self.cwd = cwd
+        self.static = False
+        self.capture = capture
+        if env:
+            assert(isinstance(env, WrappedDict))
+            self.env = env.dict
+        else:
+            self.env = None
+
+    def __call__(self, ee, command):
+        old_cwd = os.getcwd()
+        os.chdir(self.cwd)
+        old_environ = dict(os.environ)
+        if self.env:
+            os.environ.update(self.env.items())
+        try:
+            result = shell(command, capture = self.capture)
+        finally:
+            os.environ.clear()
+            os.environ.update(old_environ)
+            os.chdir(old_cwd)
+        return result
+
+def builtin_shell(ee, cwd, env = {}):
+    return Shell(cwd, env)
+
+def builtin_rshell(ee, cwd, env = {}):
+    return Shell(cwd, env, capture = True)
+
+def builtin_then(ee, *args):
+    return args[-1]
+
+def builtin_dump(ee, *args):
+    print("dump:", *(format_expr(arg) for arg in args))
+    if args:
+        return args[0]
+
+def builtin_report(ee, *args):
+    for arg in args:
+        print(arg)
+    if args:
+        return args[0]
+
+def builtin_firstfile(ee, pattern):
+    # search directory for files matching pattern and sort by modification time
+    files = sorted(glob.glob(pattern), key=os.path.getmtime)
+    if not files:
+        error("firstfile: no files matching {}", pattern)
+    # return most recently modified file
+    return files[-1]
+
+class Macros:
+    Dict = Macro("dict", macro_dict)
+    Tempdir = Macro("tempdir", macro_tempdir)
+    Tempfile = Macro("tempfile", macro_tempfile)
+    Plain = Macro("plain", macro_plain)
+    Fn = Macro("fn", macro_fn)
+
+class Builtins:
+    Join = Builtin('..', builtin_join, static = True)
+    Download = Builtin("download", builtin_download)
+    DownloadSVN = Builtin("download-svn", builtin_download_svn)
+    Then = Builtin("then", builtin_then)
+    Commonpath = Builtin("commonpath", builtin_commonpath)
+    Extract = Builtin("extract", builtin_extract)
+    Mkdir = Builtin("mkdir", builtin_mkdir)
+    Shell = Builtin("shell", builtin_shell)
+    RShell = Builtin("rshell", builtin_rshell)
+    Dump = Builtin("dump", builtin_dump)
+    Report = Builtin("report", builtin_report)
+    FirstFile = Builtin("firstfile", builtin_firstfile)
+
+class ExecutionEnv:
+    def __init__(self, package = None):
+        self.cache = {}
+        self.tempdirs = []
+        self.tempfiles = []
+        self.package = package
+
+    def is_static(self):
+        return self.package == None
+
+    def cleanup(self):
+        for tempdir in self.tempdirs:
+            shutil.rmtree(tempdir)
+        for tempfile in self.tempfiles:
+            os.remove(tempfile)
+
+static_ee = ExecutionEnv()
+
+class Platform:
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+class Platforms:
+    Windows = Platform("windows")
+    WindowsMinGW = Platform("windows-mingw")
+    Linux = Platform("linux")
+    MacOS = Platform("macos")
+    Unknown = Platform("unknown")
+
+def get_system_platform():
+    if sys.platform.startswith('linux'):
+        return Platforms.Linux
+    elif sys.platform.startswith('win32'):
+        if IS_MINGW:
+            return Platforms.WindowsMinGW
+        else:
+            return Platforms.Windows
+    elif sys.platform.startswith('darwin'):
+        return Platforms.MacOS
+    else:
+        return Platforms.Unknown
+
+NO_VERSION = "unknown"
+
+class Package:
+    def __init__(self, name, project):
+        self.name = name
+        self.project = project
+        self.summary = ""
+        self.version = NO_VERSION
+        self.aliases = {}
+        self.directories = {}
+        self.platforms = set()
+        self.deps = set()
+        self.pre_install = None
+        self.post_install = None
+        self.pre_remove = None
+        self.post_remove = None
+
+    def __repr__(self):
+        return "package({})".format(self.name)
+
+    def finalize(self):
+        self.fullname = "{}-{}-{}".format(self.name.string,
+            self.version, self.project.platform.name)
+        self.archivepath = os.path.join(self.project.archive_dir,
+            self.fullname + ".tar.gz")
+        self.dlcachepath = self.project.dlcache_dir
+        self.statepath = os.path.join(self.project.install_state_dir,
+            self.name.string)
+
+    def is_built(self):
+        return os.path.isfile(self.archivepath)
+
+    def is_installed(self):
+        return os.path.isfile(self.statepath)
+
+    def get_installed_version(self):
+        assert self.is_installed()
+        # open state file and read first line
+        with open(self.statepath, 'r') as statefile:
+            return statefile.readline().strip()
+
+    def get_version_string(self, full = False):
+        if self.is_version_set():
+            MAX_L = 16
+            if not full and len(self.version) > (MAX_L + 3):
+                return self.version[:MAX_L] + "..."
+            else:
+                return self.version
+        elif full:
+            return "autosync"
+        else:
+            return ""
+
+    def is_version_set(self):
+        return self.version and (self.version != NO_VERSION)
+
+    def always_sync(self):
+        return not self.is_version_set()
+
+    def needs_sync(self):
+        if not self.is_installed():
+            return False
+        return self.always_sync() \
+            or (self.get_installed_version() != self.version)
+
+    def supports(self, platform):
+        if not self.platforms:
+            return True
+        return platform in self.platforms
+
+    def get_status_string(self):
+        if self.is_installed():
+            if self.needs_sync():
+                if self.always_sync():
+                    status = "needs sync"
+                else:
+                    status = "needs sync ({} != {})".format(
+                        self.get_installed_version(), self.version)
+            else:
+                status = "installed ({})".format(self.get_installed_version())
+        elif self.is_built():
+            status = "built, but not installed"
+        else:
+            status = "not installed"
+        return status
+
+    def show(self):
+        print("name:",self.name)
+        print("version:",self.get_version_string(full=True))
+        print("full name:",self.fullname)
+        print("summary:", self.summary)
+        print()
+        status = self.get_status_string()
+        print("status:", status)
+
+        if self.is_installed():
+            print("installed files:")
+            with open(self.statepath, 'r') as f:
+                f.readline()
+                for line in f:
+                    print("  " + line.strip())
+        elif self.is_built():
+            print("files in package:")
+            shell("{} -ztf {}".format(TAR_CMD, self.archivepath), silent=True)
+
+    def build(self,for_sync=False,force=False):
+        if self.is_built() and not self.always_sync() and not force:
+            if not for_sync:
+                print("{} is already built, skipping".format(self.name))
+            return
+        ee = ExecutionEnv(self)
+        tempdir = tempfile.mkdtemp("_eo_pkg_" + self.name.string)
+        for k,v in self.aliases.items():
+            k = eval_expr(ee, k)
+            srcpath = eval_expr(ee, v)
+            dstpath = os.path.normpath(tempdir + "/" + k)
+            if os.path.isfile(srcpath):
+                os.makedirs(os.path.dirname(dstpath), exist_ok=True)
+                print("copying",srcpath,"=>",dstpath)
+                shutil.copy2(srcpath, dstpath)
+            else:
+                copytree(srcpath, dstpath)
+        for k,vs in self.directories.items():
+            k = eval_expr(ee, k)
+            dstpath = os.path.normpath(tempdir + "/" + k)
+            for v in vs:
+                srcpath = eval_expr(ee, v)
+                if os.path.isfile(srcpath):
+                    os.makedirs(dstpath, exist_ok=True)
+                    print("copying",srcpath,"=>",dstpath)
+                    shutil.copy2(srcpath, dstpath)
+                else: # directory
+                    subdstpath = os.path.join(dstpath, os.path.basename(srcpath))
+                    copytree(srcpath, subdstpath)
+        print("cleaning up temporary files...")
+        ee.cleanup()
+        install_state_dir = tempdir + PROJECT_INSTALL_STATE_DIR
+        os.makedirs(install_state_dir, exist_ok=True)
+        install_state_path = install_state_dir + "/" + self.name.string
+        # write list of all recursively installed files to install state path
+        print("generating install state file",install_state_path)
+        with open(install_state_path, "w") as f:
+            f.write(self.version + "\n")
+            for root, dirs, files in os.walk(tempdir):
+                for filename in files:
+                    path = os.path.relpath(os.path.join(root, filename), tempdir)
+                    f.write(path + "\n")
+        # create package archive in project config dir
+        os.makedirs(self.project.archive_dir, exist_ok=True)
+        if os.path.isfile(self.archivepath):
+            os.remove(self.archivepath)
+        shell("{} -czf {} -C {} .".format(TAR_CMD, self.archivepath, tempdir))
+        print("cleaning up package image...")
+        shutil.rmtree(tempdir)
+        print("package built.")
+
+    def remove(self, for_sync = False):
+        if not self.is_installed():
+            print("package {} is not installed.".format(self.name))
+            return
+        if not for_sync:
+            print_r("removing package {}...".format(self.name))
+        if self.pre_remove:
+            eval_expr(ee, self.pre_remove)
+        # read list of all recursively installed files from install state path
+        install_state_path = self.statepath
+        installed_files = []
+        with open(install_state_path, "r") as f:
+            firstline = f.readline()
+            for line in f:
+                installed_files.append(line.strip())
+        for subpath in installed_files:
+            filepath = os.path.join(self.project.path, subpath)
+            filedir = os.path.dirname(filepath)
+            if not os.path.isfile(filepath):
+                continue
+            #print("removing",filepath)
+            os.remove(filepath)
+            # check if the directory we removed the file from is empty
+            if not os.listdir(filedir):
+                #print("removing empty directory",filedir)
+                os.rmdir(filedir)
+        if self.post_remove:
+            eval_expr(ee, self.post_remove)
+        if not for_sync:
+            print_r("{} removed.".format(self.name))
+            print()
+
+    def sync(self, force = False):
+        if not self.is_installed():
+            print("package {} is not installed.".format(self.name))
+            return
+        if not self.needs_sync() and not force:
+            print("package {} is already at the latest version.".format(self.name))
+            return
+        print_r("synchronizing package {}...".format(self.name))
+        self.build()
+        self.remove(for_sync = True)
+        self.install(for_sync = True)
+        print_r("{} synchronized.".format(self.name))
+        print()
+
+    def install(self, for_sync = False):
+        if self.is_installed():
+            print("package {} is already installed.".format(self.name))
+            return
+        if not for_sync:
+            self.build(for_sync = True)
+            print_r("installing {}...".format(self.name))
+        ee = ExecutionEnv(self)
+        if self.pre_install:
+            eval_expr(ee, self.pre_install)
+        shell("{} -xf {} -C {}".format(TAR_CMD, self.archivepath, self.project.path),
+            silent=True)
+        if self.post_install:
+            eval_expr(ee, self.post_install)
+        if not for_sync:
+            print_r("{} installed.".format(self.name))
+            print()
+
+class ASTSymbol:
+    Let = symbol(':=')
+    Join = symbol('..')
+    In = symbol('in')
+    Alias = symbol('alias')
+    Summary = symbol('summary')
+    Platform = symbol('platform')
+    Version = symbol('version')
+    Depends = symbol('depends')
+    PreInstall = symbol('preinstall')
+    PostInstall = symbol('postinstall')
+    PreRemove = symbol('preremove')
+    PostRemove = symbol('postremove')
+
+@memoize
+def env_bind (scope, name, value):
+    return ((name, value), scope)
+
+def env_bind_many(scope, **map):
+    for k,v in map.items():
+        scope = env_bind(scope, symbol(k), v)
+    return scope
+
+@memoize
+def env_get (scope, name):
+    while scope != ():
+        key,value = scope[0]
+        if key == name:
+            return value
+        scope = scope[1]
+    error("unbound name: {}", name)
+
+def expand_string(env, s):
+    if '{' in s:
+        # embedded variable
+        result = [Builtins.Join]
+        i = 0
+        L = len(s)
+        while i < L:
+            if s[i] == '{':
+                i += 1
+                start = i
+                while i < L and s[i] != '}':
+                    i += 1
+                if i == L:
+                    error("unterminated variable")
+                try:
+                    result.append(env_get(env, symbol(s[start:i])))
+                except EOError as e:
+                    e.append("while resolving string variable")
+                    raise
+                i += 1
+            else:
+                # read string chunk up to the next variable and append to result
+                start = i
+                while i < L and s[i] != '{':
+                    i += 1
+                result.append(s[start:i])
+        return env, tuple(result)
+    return env, s
+
+# returns True if expr is a tuple of some tuples
+def is_expr_nested(expr):
+    if isinstance(expr, tuple):
+        for e in expr:
+            if isinstance(e, tuple):
+                return True
+    return False
+
+# Format value as symbolic list expression
+def format_expr(value):
+    if isinstance(value, tuple):
+        return '(' + ' '.join(format_expr(e) for e in value) + ')'
+    else:
+        return repr(value)
+
+# Format value as indented multiline string
+def format_indented_expr(value, indent = 0):
+    pad = '    ' * indent
+    if isinstance(value, tuple):
+        if len(value) <= 1:
+            return pad + format_expr(value)
+        elif is_expr_nested(value):
+            return pad + format_expr(value[0]) + '\n' \
+                + '\n'.join(format_indented_expr(e, indent + 1) for e in value[1:])
+        else:
+            return pad + ' '.join(format_expr(e) for e in value)
+    else:
+        return pad + repr(value)
+
+
+def print_expr(value, indent = 0):
+    print(format_indented_expr(value, indent))
+
+def expand_expr(env, expr):
+    T = type(expr)
+    if T == tuple:
+        if len(expr) >= 2:
+            if expr[1] == ASTSymbol.Let:
+                name = expr[0]
+                arg = expr[2]
+                env,arg = expand_expr(env,arg)
+                env = env_bind(env,name,arg)
+                return env,()
+        if len(expr) >= 1:
+            try:
+                env,dest = expand_expr(env,expr[0])
+            except EOError as e:
+                e.append("while evaluating expression " + format_expr(expr))
+                raise
+            if type(dest) == Macro:
+                try:
+                    return dest.func(env,expr)
+                except EOError as e:
+                    e.append("while applying macro " + dest.name)
+                    raise
+            else:
+                return expand_args(env, expr)
+        return env,()
+    elif T == str:
+        return expand_string(env, expr)
+    elif T == Symbol:
+        return env,env_get(env, expr)
+    return env,expr
+
+def expand_args(env, args):
+    result = []
+    orig_env = env
+    assert(type(args) == tuple)
+    for arg in args:
+        env,arg = expand_expr(env,arg)
+        if arg != ():
+            result.append(arg)
+    return orig_env,tuple(result)
+
+def parse_recipe(project, text, path, packages, update_urls, import_urls):
+    recipe_path = path
+    static_env = ()
+
+    def apply_shortcut(orig_env, args):
+        env = orig_env
+        env,name = expand_expr(env, args[1])
+        name = eval_expr(static_ee, name)
+        env,url = expand_expr(env, args[2])
+        url = eval_expr(static_ee, url)
+        add_import_url(import_urls, name, url)
+        return env,()
+
+    def apply_update_url(orig_env, args):
+        env = orig_env
+        env,url = expand_expr(env, args[1])
+        url = eval_expr(static_ee, url)
+        if path in update_urls:
+            error("duplicate update-url in recipe {}", path)
+        update_urls[path] = url
+        return env,()
+
+    def apply_package(orig_env, args):
+        env = orig_env
+        name = args[1]
+        package = Package(name, project)
+        seen = set()
+        for expr in args[2:]:
+            if type(expr) == tuple:
+                if len(expr) >= 1:
+                    dest = expr[0]
+                    if dest in seen:
+                        error("duplicate {}", dest)
+                    if dest == ASTSymbol.In:
+                        env,args = expand_args(env,expr[1:])
+                        if args[0] in package.directories:
+                            error("directory {} already filled in package {}", args[0], name)
+                        package.directories[args[0]] = args[1:]
+                        continue
+                    elif dest == ASTSymbol.Alias:
+                        env,args = expand_args(env,expr[1:])
+                        if args[0] in package.aliases:
+                            error("alias {} already defined in package {}", args[0], name)
+                        package.aliases[args[0]] = args[1]
+                        continue
+                    elif dest == ASTSymbol.Summary:
+                        seen.add(dest)
+                        env,args = expand_args(env,expr[1:])
+                        arg = eval_expr(static_ee, args[0])
+                        if type(arg) != str:
+                            error("summary string expected")
+                        package.summary = arg
+                        continue
+                    elif dest == ASTSymbol.Platform:
+                        seen.add(dest)
+                        env,args = expand_args(env,expr[1:])
+                        for arg in args:
+                            if not isinstance(arg, Platform):
+                                error("platform expected")
+                            package.platforms.add(arg)
+                        continue
+                    elif dest == ASTSymbol.Version:
+                        seen.add(dest)
+                        env,args = expand_args(env,expr[1:])
+                        arg = eval_expr(static_ee, args[0])
+                        if type(arg) != str:
+                            error("version string expected")
+                        package.version = arg
+                        continue
+                    elif dest in (ASTSymbol.PreInstall, ASTSymbol.PostInstall, ASTSymbol.PreRemove, ASTSymbol.PostRemove):
+                        seen.add(dest)
+                        env,args = expand_args(env,expr[1:])
+                        attrname = {ASTSymbol.PreInstall:'pre_install',
+                        ASTSymbol.PostInstall:'post_install',
+                        ASTSymbol.PreRemove:'pre_remove',
+                        ASTSymbol.PostRemove:'post_remove'}
+                        setattr(package,attrname[dest],args[0])
+                        continue
+                    elif dest == ASTSymbol.Depends:
+                        seen.add(dest)
+                        depends = set()
+                        for arg in expr[1:]:
+                            if not isinstance(arg, Symbol):
+                                error("depends: expected symbol, not " + repr(type(arg)))
+                            depends.add(arg.string)
+                        package.deps = depends
+                        continue
+            env,expr = expand_expr(env, expr)
+            if expr == ():
+                continue
+            error("summary|version|platform|depends|in|alias expression expected")
+        package.finalize()
+        if package.supports(project.platform):
+            if name.string in packages:
+                error("duplicate package {}", name)
+            packages[name.string] = package
+        return orig_env,()
+    ast = Parser(text).parse()
+    env = ()
+    for builtin in Builtins.__dict__.values():
+        if not isinstance(builtin, Builtin):
+            continue
+        env = env_bind(env, symbol(builtin.name), builtin)
+    for macro in Macros.__dict__.values():
+        if not isinstance(macro, Macro):
+            continue
+        env = env_bind(env, symbol(macro.name), macro)
+    for platform in Platforms.__dict__.values():
+        if not isinstance(platform, Platform):
+            continue
+        env = env_bind(env, symbol(platform.name), platform)
+    env = env_bind(env, symbol("package"), Macro("package", apply_package))
+    env = env_bind(env, symbol("update-url"), Macro("update-url", apply_update_url))
+    env = env_bind(env, symbol("shortcut"), Macro("shortcut", apply_shortcut))
+    env = env_bind(env, symbol("cpu-core-count"), get_num_cpu_cores())
+    rel_recipe_dir = os.path.relpath(project.recipe_dir, project.path)
+    env = env_bind(env, symbol("recipe-dir"),rel_recipe_dir)
+    try:
+        recipe_file = os.path.relpath(recipe_path, project.path)
+    except:
+        # use full path when this fails (e.g. on windows)
+        recipe_file = recipe_path
+    env = env_bind(env, symbol("recipe-file"),recipe_file)
+    env = env_bind(env, symbol("mingw-dir"), MINGW_PATH)
+    for expr in ast:
+        env, expr = expand_expr(env, expr)
+
+def eval_new_expr(ee, expr):
+    if type(expr) == tuple:
+        # evaluate expression arguments
+        orig_expr = expr
+        expr = [eval_expr(ee, arg) for arg in expr]
+        # apply the first argument of the expression to the remaining arguments
+        if len(expr) >= 1:
+            func = expr[0]
+            if isinstance(func, Builtin):
+                if ee.is_static() and not func.static:
+                    error("builtin {} not available in static environment", func.name)
+                return func(ee, *expr[1:])
+            elif isinstance(func, Macro) and func.closure:
+                env,result = expand_expr((), tuple(expr))
+                return eval_expr(ee, result)
+            else:
+                error("cannot apply value of type {} to expression {}", type(func), orig_expr)
+        else:
+            return ()
+    else:
+        return expr
+
+# recursively evaluate a previously expanded expression
+def eval_expr(ee, expr):
+    if expr not in ee.cache:
+        ee.cache[expr] = eval_new_expr(ee, expr)
+    return ee.cache[expr]
+
+# project
+################################################################################
+
+def find_project_config_dir(cwd, search_parents = True):
+    while True:
+        path = cwd + PROJECT_CONFIG_DIR
+        if os.path.isdir(path):
+            return path
+        if not search_parents:
+            return None
+        next_cwd = os.path.realpath(cwd + "/..")
+        if (cwd == next_cwd):
+            return None
+        cwd = next_cwd
+
+def find_project_dir(cwd, search_parents = True):
+    path = find_project_config_dir(cwd,
+        search_parents = search_parents)
+    if path:
+        return os.path.realpath(path + "/..")
+    else:
+        return None
+
+class MissingProject:
+    def __init__(self, path):
+        self.path = path
+
+    def init (self):
+        print("initializing project in",self.path)
+        os.makedirs(self.path + PROJECT_CONFIG_DIR)
+        print("done.")
+        return Project(self.path)
+
+    def stub (self, *args, **kwargs):
+        error("project directory not found.")
+
+    show = stub
+    build = stub
+    install = stub
+    sync = stub
+    remove = stub
+    show_status = stub
+    search = stub
+    import_recipe = stub
+    update = stub
+
+# break list of words into multiple lines
+def wrap_words(words, width = 80, indent = "  "):
+    result = []
+    line = ""
+    for word in words:
+        if (len(line) + len(word)) > width:
+            result.append(indent + line)
+            line = word
+        elif line:
+            line += " " + word
+        else:
+            line += word
+    if line != "":
+        result.append(indent + line)
+    return result
+
+def add_import_url(import_urls, name, url):
+    if name in import_urls:
+        error("duplicate shortcut {}", name)
+    import_urls[name] = url
+
+class Project:
+    def __init__(self, path):
+        self.path = path
+        self.config_dir = self.path + PROJECT_CONFIG_DIR
+        self.platform = get_system_platform()
+        self.archive_dir = os.path.join(self.config_dir, "archive")
+        self.dlcache_dir = os.path.join(self.config_dir, "dlcache")
+        self.update_urls = {}
+        self.packages = collections.OrderedDict()
+        rcpath = os.path.join(self.config_dir, "eorc")
+        rc = configparser.ConfigParser()
+        if os.path.isfile(rcpath):
+            rc.read(rcpath)
+        project_recipe_dir = rc.get("eo", "recipedir",
+            fallback=PROJECT_RECIPE_DIR)
+        # enumerate entries in shortcuts section of config file
+        self.import_urls = dict(PRESET_IMPORT_URLS)
+        for section in rc.sections():
+            if section == "shortcuts":
+                for name,value in rc.items(section):
+                    add_import_url(self.import_urls, name, value)
+        self.recipe_dir = self.path + project_recipe_dir
+        self.install_state_dir = self.path + PROJECT_INSTALL_STATE_DIR
+
+    def clear_packages(self):
+        self.update_urls = {}
+        self.packages = collections.OrderedDict()
+
+    def init (self):
+        error("error: project already exists.")
+
+    def update(self):
+        self.read_packages()
+        update_urls = self.update_urls
+        self.clear_packages()
+        for path,url in update_urls.items():
+            targetname = os.path.relpath(path, self.path)
+            print_r("updating {} from '{}'...".format(targetname,url))
+            self.import_recipe(url, for_update = True, filepath = path)
+            print_r("updated {} from {}".format(targetname,url))
+            print()
+
+    def show_status (self):
+        self.read_packages()
+        print("platform:",self.platform)
+        print("project directory:", self.path)
+        print("recipe directory:", self.recipe_dir)
+        if IS_MINGW:
+            print("mingw directory:", MINGW_PATH)
+        print()
+        if not self.update_urls:
+            print("no known update sources.")
+        else:
+            print("update sources:")
+            print()
+            for path,url in self.update_urls.items():
+                targetname = os.path.relpath(path, self.path)
+                print("{} <= {}".format(targetname,url))
+            print()
+        installed = []
+        for name,package in self.packages.items():
+            if package.is_installed():
+                installed.append((name,package))
+        if not installed:
+            print("no packages installed.")
+        else:
+            print("installed packages:")
+            print()
+            for name,package in installed:
+                status = package.get_status_string()
+                var = package.get_version_string(full = True)
+                if package.needs_sync():
+                    print(name + " (" + var + ") - " + status)
+                else:
+                    print(name + " (" + var + ")")
+        print()
+
+    def read_packages (self):
+        if self.packages: # already read
+            return
+        if os.path.isdir(self.recipe_dir):
+            print("reading packages...")
+            for path in os.listdir(self.recipe_dir):
+                filepath = os.path.join(self.recipe_dir, path)
+                if filepath.endswith('.eo') and os.path.isfile(filepath):
+                    with open(filepath, 'r') as f:
+                        try:
+                            packages = collections.OrderedDict(self.packages)
+                            update_urls = dict(self.update_urls)
+                            import_urls = dict(self.import_urls)
+                            parse_recipe(self, f.read(), filepath, packages, update_urls, import_urls)
+                            self.packages.update(packages)
+                            self.update_urls.update(update_urls)
+                            self.import_urls.update(import_urls)
+                        except EOError as e:
+                            # print error and skip it
+                            e.print()
+                            print("skipping broken recipe", filepath)
+            if not self.packages:
+                print("no packages available.")
+        else:
+            print("recipe directory {} not found.".format(self.recipe_dir))
+
+    def import_recipe(self, url, install = False, for_update = False, filepath = None):
+        orig_url = url
+        foreign = False
+        if not for_update:
+            if url not in self.import_urls:
+                foreign = True
+            url = self.import_urls.get(url, url)
+        filename = url_filename(url)
+        if not filename.endswith(".eo"):
+            msg = "don't know how to import {}\n".format(orig_url)
+            msg += "available shortcuts:\n"
+            for name in sorted(self.import_urls.keys()):
+                url = self.import_urls[name]
+                msg += "  {} => {}\n".format(name, url)
+            error(msg)
+        if foreign:
+            print(RECIPE_WARNING)
+            user_confirmation()
+        if filepath is None:
+            filepath = os.path.join(self.recipe_dir, filename)
+            if not for_update:
+                if os.path.isfile(filepath):
+                    print("file",filepath,"already exists, skipping")
+                    return
+            os.makedirs(self.recipe_dir, exist_ok=True)
+        try:
+            tmpfilepath = download_tempfile(url, filename, silent = for_update)
+        except:
+            error("failed to download {}", url)
+        with open(tmpfilepath, 'r') as f:
+            parse_recipe(self, f.read(), tmpfilepath, self.packages, self.update_urls, self.import_urls)
+        shutil.copy2(tmpfilepath, filepath)
+        if not for_update:
+            names = []
+            for name,package in self.packages.items():
+                print("successfully imported recipe for package {}".format(name))
+                names.append(name)
+            if install:
+                self.install(names[0:1], autoconfirm = True)
+
+    def search (self, pattern):
+        self.read_packages()
+        if self.packages:
+            matches = 0
+            print("list of matching packages:")
+            print()
+            for name,package in self.packages.items():
+                if re.match(pattern, name):
+                    matches += 1
+                    print(name,package.get_version_string())
+                    print("  " + package.summary)
+                    print()
+            print("{} matching packages found.".format(matches))
+
+    def simple_package_function (funcname):
+        def func (self, packagenames, **kwargs):
+            self.read_packages()
+            for name,package in self.packages.items():
+                if name in packagenames:
+                    return getattr(package, funcname)(**kwargs)
+        return func
+
+    show = simple_package_function("show")
+    build = simple_package_function("build")
+
+    def compute_deps(self, packagenames, predicate = None):
+        deps = []
+        seeing = set()
+        seen = set()
+        def walk(package, level):
+            if package in seen:
+                return
+            if package in seeing:
+                error("circular dependency to package {} detected".format(package.name.string))
+            if predicate and not predicate(package, level):
+                return
+            seeing.add(package)
+            sublevel = level + 1
+            for dep in package.deps:
+                if not dep in self.packages:
+                    error("package {} depends on unknown package {}", package.name, dep)
+                walk(self.packages[dep], sublevel)
+            seen.add(package)
+            deps.append(package)
+        for name in packagenames:
+            if not name in self.packages:
+                error("unknown package '{}'", name)
+            walk(self.packages[name], 0)
+        return deps
+
+    def compute_rdeps(self):
+        rdeps = {}
+        for package in self.packages.values():
+            rdeps[package.name.string] = set()
+        for package in self.packages.values():
+            for dep in package.deps:
+                if not dep in self.packages:
+                    error("package {} depends on unknown package {}", package.name, dep)
+                rdeps[dep].add(package.name.string)
+        return rdeps
+
+    def install (self, packagenames, autoconfirm = False, **kwargs):
+        self.read_packages()
+        def pred(package, level):
+            return not package.is_installed()
+        deps = self.compute_deps(packagenames, predicate = pred)
+        if not deps:
+            print("no packages to install.")
+            return
+        print("the following packages will be installed:")
+        for line in wrap_words([dep.name.string for dep in deps]):
+            print(line)
+        print()
+        if not autoconfirm:
+            user_confirmation()
+        for dep in deps:
+            dep.install(**kwargs)
+        print("done.")
+
+    def sync (self, packagenames, force=False, **kwargs):
+        self.read_packages()
+        if not packagenames:
+            packagenames = [package.name.string for package in self.packages.values()
+                if package.is_installed()]
+        if force:
+            def pred(package, level):
+                return True
+        else:
+            def pred(package, level):
+                return (not package.is_installed()) or package.needs_sync()
+        deps = self.compute_deps(packagenames, predicate = pred)
+        if not deps:
+            print("no packages to synchronize.")
+            return
+        print("the following packages will be synchronized:")
+        for line in wrap_words([dep.name.string for dep in deps]):
+            print(line)
+        print()
+        user_confirmation()
+        for dep in deps:
+            dep.sync(force=force, **kwargs)
+        print("done.")
+
+    def remove (self, packagenames, keep_deps = False, **kwargs):
+        self.read_packages()
+        rdeps = self.compute_rdeps()
+        to_remove = set(packagenames)
+        def pred(package, level):
+            if not package.is_installed():
+                if level == 0:
+                    error("package {} is not installed.", package.name)
+                else:
+                    return False
+            for rdep in rdeps[package.name.string]:
+                if rdep not in to_remove and self.packages[rdep].is_installed():
+                    if level == 0:
+                        error("package {} is still required by package {}", package.name, rdep)
+                    else:
+                        return False
+            if keep_deps and (level > 0):
+                return False
+            to_remove.add(package.name.string)
+            return True
+        deps = self.compute_deps(packagenames, predicate = pred)
+        if not deps:
+            print("no packages to remove.")
+            return
+        print("the following packages will be removed:")
+        for line in wrap_words([dep.name.string for dep in deps]):
+            print(line)
+        print()
+        user_confirmation()
+        for dep in deps:
+            dep.remove(**kwargs)
+        print("done.")
+
+    @classmethod
+    def find(cls, cwd, search_parents = True):
+        cwd = os.path.realpath(cwd)
+        proj_dir = find_project_dir(cwd, search_parents = search_parents)
+        if proj_dir:
+            return Project(proj_dir)
+        else:
+            return MissingProject(cwd)
+
+# commands
+################################################################################
+
+def cmd_init(args):
+    project = Project.find(args.dest, search_parents = False)
+    project = project.init()
+    if args.url:
+        project.import_recipe(args.url, install=True)
+
+def cmd_import(args):
+    project = Project.find(".")
+    project.read_packages()
+    project.import_recipe(args.url, install=args.install)
+
+def cmd_update(args):
+    project = Project.find(".")
+    project.update()
+
+def cmd_status(args):
+    project = Project.find(".")
+    project.show_status()
+
+def cmd_search(args):
+    project = Project.find(".")
+    project.search(args.pattern)
+
+def cmd_show(args):
+    project = Project.find(".")
+    project.show(args.name)
+
+def cmd_build(args):
+    project = Project.find(".")
+    project.build(args.name,force=args.force)
+
+def cmd_install(args):
+    project = Project.find(".")
+    project.install(args.name,autoconfirm=args.yes)
+
+def cmd_sync(args):
+    project = Project.find(".")
+    project.sync(args.name, force=args.force)
+
+def cmd_remove(args):
+    project = Project.find(".")
+    project.remove(args.name, keep_deps=args.keep_deps)
+
+################################################################################
+
+arguments = argparse.ArgumentParser(
+    description='Major EO - Project Oriented Package Management')
+subcommands = arguments.add_subparsers(title="subcommands",dest="subcommand")
+
+cmd = subcommands.add_parser("init", help="initialize project environment")
+cmd.set_defaults(func=cmd_init)
+cmd.add_argument("--dest",nargs="?",default=".",
+    help="path to directory to be initialized")
+cmd.add_argument("url",nargs="?",
+    help="url of recipe file to install the first package from")
+
+cmd = subcommands.add_parser("status", aliases=["stat"],
+    help="show project environment status")
+cmd.set_defaults(func=cmd_status)
+
+cmd = subcommands.add_parser("import", help="import recipe from URL")
+cmd.set_defaults(func=cmd_import)
+cmd.add_argument("url",
+    help="url to recipe file to import")
+cmd.add_argument("--install",action="store_true",
+    help="install first package from recipe")
+
+cmd = subcommands.add_parser("search", help="search recipes available for project")
+cmd.set_defaults(func=cmd_search)
+cmd.add_argument("pattern",nargs="?",default=".*",
+    help="regex search pattern")
+
+cmd = subcommands.add_parser("show", help="show recipe details")
+cmd.set_defaults(func=cmd_show)
+cmd.add_argument("name",nargs="*",
+    help="name of package to inspect")
+
+cmd = subcommands.add_parser("build", help="build package from recipe")
+cmd.set_defaults(func=cmd_build)
+cmd.add_argument("name",nargs="*",
+    help="name of package to build")
+cmd.add_argument("--force",action="store_true",
+    help="force building even if package is already built")
+
+cmd = subcommands.add_parser("update", aliases=["up"],
+    help="update recipes from remote")
+cmd.set_defaults(func=cmd_update)
+
+cmd = subcommands.add_parser("install", help="install package from recipe")
+cmd.set_defaults(func=cmd_install)
+cmd.add_argument("-y","--yes",action="store_true",dest="yes",
+    help="always confirm package installation")
+cmd.add_argument("name",nargs="*",
+    help="name of package to install")
+
+cmd = subcommands.add_parser("sync", help="synchronize package with recipe")
+cmd.set_defaults(func=cmd_sync)
+cmd.add_argument("name",nargs="*",
+    help="name of package to synchronize")
+cmd.add_argument("--force",action="store_true",
+    help="force synchronization even if package is already current")
+
+cmd = subcommands.add_parser("remove", help="remove package from recipe")
+cmd.set_defaults(func=cmd_remove)
+cmd.add_argument("name",nargs="*",
+    help="name of recipe to remove")
+cmd.add_argument("--keep-deps",action="store_true",
+    help="do not remove dependencies")
+
+################################################################################
+
+if __name__ == '__main__':
+    args = arguments.parse_args()
+    if args.subcommand:
+        try:
+            args.func(args)
+        except EOError as e:
+            e.print()
+            sys.exit(255)
+    else:
+        print_program_header()
+        print("Major EO reporting for duty. Try `eo --help` for more info.")
