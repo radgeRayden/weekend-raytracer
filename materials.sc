@@ -34,7 +34,7 @@ struct DielectricM
         attenuation := (vec3 1) # never absorb
         let coef =
             # air -> dielectric or dielectric -> air
-            ? record.front? (1 / self.refraction-index) self.refraction-index
+            ? record.front? (1 / self.refraction-index) (deref self.refraction-index)
 
         ndir := (normalize iray.direction)
         let cos-theta =
