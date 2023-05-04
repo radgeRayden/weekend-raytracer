@@ -90,13 +90,11 @@ fn init (width height)
             'get cache.bind-group-layouts S"StreamingMesh"
         else
             assert false "invalid cache"
-            unreachable;
     let layout1 =
         try
             'get cache.bind-group-layouts S"Uniforms"
         else
             assert false "invalid cache"
-            unreachable;
 
     let target = (GPUTexture none width height)
 
@@ -144,7 +142,6 @@ fn update (rp data)
     'set-bindgroup rp 1:u32 state.bgroup1
 
     'draw rp 6:u32 1:u32 0:u32 0:u32
-
 
 do
     let init update
