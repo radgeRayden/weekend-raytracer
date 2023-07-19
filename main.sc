@@ -13,7 +13,7 @@ import .threads
 import .display
 import .PRNG
 
-THREAD_COUNT := 12
+THREAD_COUNT := 20
 
 RT_SAMPLE_COUNT := 500
 MAX_BOUNCES     := 50
@@ -147,14 +147,16 @@ inline render-rect (x y w h iter rng)
 @@ 'on bottle.configure
 fn (cfg)
     cfg.window.title = "my little raytracer"
-    cfg.window.width = FB_WIDTH
-    cfg.window.height = FB_HEIGHT
+    cfg.window.width = FB_WIDTH as i32
+    cfg.window.height = FB_HEIGHT as i32
 
 global start-time : f64
 @@ 'on bottle.load
 fn ()
-    display.init FB_WIDTH FB_HEIGHT
-    start-time = (bottle.timer.get-time)
+    try (display.init FB_WIDTH FB_HEIGHT)
+    else (assert false)
+
+    start-time = (bottle.time.get-time)
 
     # dispatch work
     va-map
@@ -186,16 +188,16 @@ fn ()
                                     (min ((y * TILE_SIZE) + TILE_SIZE) FB_HEIGHT) - (y * TILE_SIZE)
                                 render-rect (x * TILE_SIZE) (y * TILE_SIZE) w h iter rng
 
-                    end-time := (bottle.timer.get-time)
+                    end-time := (bottle.time.get-time)
                     print "thread" i "done in" (end-time - start-time) "seconds"
                     null as voidstar
                 null
         va-range THREAD_COUNT
     ;
 
-@@ 'on bottle.draw
-fn (render-pass)
-    display.update render-pass (view color-buffer)
+@@ 'on bottle.render
+fn ()
+    display.update (view color-buffer)
     ;
 
 bottle.run;

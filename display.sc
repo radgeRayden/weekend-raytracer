@@ -6,8 +6,8 @@ using import String
 
 import bottle
 using bottle.gpu.types
-from (import bottle.src.gpu.binding-interface) let GPUResourceBinding
-from (import bottle.src.gpu.bindgroup) let GPUBindGroup
+using bottle.enums
+from bottle.asset let ImageData
 
 vvv bind shader
 """"struct VertexOutput {
@@ -34,11 +34,11 @@ vvv bind shader
     );
 
     @group(0)
-    @binding(1)
+    @binding(0)
     var s : sampler;
 
     @group(0)
-    @binding(2)
+    @binding(1)
     var t : texture_2d<f32>;
 
     @vertex
@@ -54,27 +54,11 @@ vvv bind shader
         return textureSample(t, s, vertex.texcoords);
     }
 
-struct Pixel plain
-    r : u8
-    g : u8
-    b : u8
-    a : u8
-
-    inline __+ (lhs rhs)
-        static-if (imply? lhs rhs)
-            inline (self other)
-                this-type
-                    self.r + other.r
-                    self.g + other.g
-                    self.b + other.b
-                    self.a + other.a
-
 struct RenderingState
-    raytracing-buffer : (Array Pixel)
-    raytracing-target : GPUTexture
-    pipeline          : GPUPipeline
-    bgroup            : GPUBindGroup
-    bgroup1           : GPUBindGroup
+    raytracing-buffer : bottle.asset.ImageData
+    raytracing-target : Texture
+    pipeline          : RenderPipeline
+    bgroup            : BindGroup
     width             : u32
     height            : u32
 
@@ -82,66 +66,67 @@ global state : (Option RenderingState)
 fn init (width height)
     bottle.gpu.set-clear-color (vec4 1)
 
-    import bottle.src.gpu.common
-    let dummies = bottle.src.gpu.common.istate.dummy-resources
-    let cache = bottle.src.gpu.common.istate.cached-layouts
-    let layout0 =
-        try
-            'get cache.bind-group-layouts S"StreamingMesh"
-        else
-            assert false "invalid cache"
-    let layout1 =
-        try
-            'get cache.bind-group-layouts S"Uniforms"
-        else
-            assert false "invalid cache"
+    target := (Texture width height none (ImageData width height))
 
-    let target = (GPUTexture none width height)
+    vert := ShaderModule shader ShaderLanguage.WGSL ShaderStage.Vertex
+    frag := ShaderModule shader ShaderLanguage.WGSL ShaderStage.Fragment
+
+    pipeline :=
+        RenderPipeline
+            layout = (nullof PipelineLayout)
+            topology = PrimitiveTopology.TriangleList
+            winding = FrontFace.CCW
+            vertex-stage =
+                VertexStage
+                    shader = vert
+                    entry-point = "vs_main"
+            fragment-stage =
+                FragmentStage
+                    shader = frag
+                    entry-point = S"fs_main"
+                    color-targets =
+                        arrayof ColorTarget
+                            typeinit
+                                format = (bottle.gpu.get-preferred-surface-format)
 
     state =
         RenderingState
             raytracing-target = target
-            pipeline = (GPUPipeline "Basic" (GPUShaderModule shader 'wgsl))
+            raytracing-buffer = ImageData width height
+            pipeline = pipeline
             bgroup =
-                GPUBindGroup layout0
-                    dummies.buffer
-                    dummies.sampler
-                    GPUResourceBinding.TextureView target._view
-            bgroup1 =
-                GPUBindGroup layout1
-                    dummies.uniform-buffer
+                BindGroup ('get-bind-group-layout pipeline 0) (Sampler)
+                    TextureView target
             width = width
             height = height
 
-    renderbuf := ('force-unwrap state) . raytracing-buffer
-    'resize renderbuf (width * height)
     ;
 
 
-fn update (rp data)
+fn update (data)
     let state = ('force-unwrap state)
-    # we need to double buffer because the graphics driver will crash if we send
-    # data that we're still touching!
-    local copy-color-buffer : (Array vec4)
-    'reserve copy-color-buffer (state.width * state.height)
-    for el in data
-        'append copy-color-buffer el
 
     tex := state.raytracing-target
     buf := state.raytracing-buffer
-    for i in (range (countof data))
-        buf @ i =
-            typeinit
-                va-map
-                    (x) -> ((clamp (x * 255) 0. 255.) as u8)
-                    unpack (sqrt (copy-color-buffer @ i))
 
-    'write tex buf
+    for i pixel in (enumerate data)
+        offset := i * 4
+
+        gen :=
+            va-zip
+                va-each (va-range (countof (typeof pixel)))
+                va-each (unpack (sqrt pixel))
+
+        static-fold (result = none) for i x in gen
+            buf.data @ (offset + i) = ((clamp (x * 255) 0. 255.) as u8)
+
+    rp := RenderPass (bottle.gpu.get-cmd-encoder) (ColorAttachment (bottle.gpu.get-swapchain-image) (clear? = false))
+    'frame-write tex buf
     'set-pipeline rp state.pipeline
-    'set-bindgroup rp 0:u32 state.bgroup
-    'set-bindgroup rp 1:u32 state.bgroup1
+    'set-bind-group rp 0:u32 state.bgroup
 
-    'draw rp 6:u32 1:u32 0:u32 0:u32
+    'draw rp 6:u32
+    'finish rp
 
 do
     let init update
