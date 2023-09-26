@@ -68,8 +68,8 @@ fn init (width height)
 
     target := (Texture width height none (ImageData width height))
 
-    vert := ShaderModule shader ShaderLanguage.WGSL ShaderStage.Vertex
-    frag := ShaderModule shader ShaderLanguage.WGSL ShaderStage.Fragment
+    vert := ShaderModule (String shader) ShaderLanguage.WGSL ShaderStage.Vertex
+    frag := ShaderModule (String shader) ShaderLanguage.WGSL ShaderStage.Fragment
 
     pipeline :=
         RenderPipeline
@@ -78,14 +78,14 @@ fn init (width height)
             winding = FrontFace.CCW
             vertex-stage =
                 VertexStage
-                    shader = vert
+                    module = vert
                     entry-point = "vs_main"
             fragment-stage =
                 FragmentStage
-                    shader = frag
+                    module = frag
                     entry-point = S"fs_main"
                     color-targets =
-                        arrayof ColorTarget
+                        (Array ColorTarget)
                             typeinit
                                 format = (bottle.gpu.get-preferred-surface-format)
 

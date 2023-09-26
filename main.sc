@@ -149,6 +149,8 @@ fn (cfg)
     cfg.window.title = "my little raytracer"
     cfg.window.width = FB_WIDTH as i32
     cfg.window.height = FB_HEIGHT as i32
+    cfg.enabled-modules.plonk = false
+    cfg.enabled-modules.imgui = false
 
 global start-time : f64
 @@ 'on bottle.load

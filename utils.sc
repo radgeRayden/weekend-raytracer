@@ -12,7 +12,6 @@ struct Ray plain
     fn at (self t)
         self.origin + (self.direction * t)
 
-enum Material
 struct HitRecord plain
     p      : vec3
     normal : vec3
@@ -79,6 +78,4 @@ fn random-in-unit-disk (rng)
 do
     let Ray HitRecord HitRecordOpt length2 refract reflect schlick random-in-unit-sphere \
         random-unit-vector random-in-unit-disk
-    # so materials.sc can see it
-    let Material
     locals;
