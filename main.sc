@@ -13,8 +13,6 @@ import .threads
 import .display
 import .PRNG
 
-THREAD_COUNT := 20
-
 RT_SAMPLE_COUNT := 500
 MAX_BOUNCES     := 50
 
@@ -152,6 +150,12 @@ fn (cfg)
     cfg.enabled-modules.plonk = false
     cfg.enabled-modules.imgui = false
 
+struct ThreadData plain
+    thread-count : i32
+    thread-index : i32
+
+global thread-data : (Array ThreadData)
+
 global start-time : f64
 @@ 'on bottle.load
 fn ()
@@ -159,42 +163,45 @@ fn ()
     else (assert false)
 
     start-time = (bottle.time.get-time)
+    thread-count := (threads.get-core-count)
 
     # dispatch work
-    va-map
-        inline (i)
-            threads.spawn
-                fn (arg)
-                    # in lieu of a proper jump function
-                    local rng : PRNG.random.Xoshiro256+ (i * 1000)
-                    # for y in (range FB_HEIGHT)
-                    #     if ((y % THREAD_COUNT) == i)
-                    #         render-row y rng
+    for i in (range thread-count)
+        'append thread-data (ThreadData thread-count i)
+        threads.spawn
+            fn (userdata)
+                data := copy (@ (userdata as (@ ThreadData)))
+                thread-count := data.thread-count
+                i := data.thread-index
 
-                    inline ceil (x)
-                        let f = (floor x)
-                        if (f < x)
-                            f + 1.0
-                        else
-                            f 
+                # in lieu of a proper jump function
+                local rng : PRNG.random.Xoshiro256+ (i * 1000)
 
-                    let TILE_SIZE = 16
-                    let rows = ((ceil (FB_HEIGHT / TILE_SIZE)) as u32)
-                    let columns = ((ceil (FB_WIDTH / TILE_SIZE)) as u32)
-                    using import itertools
-                    for iter in (range RT_SAMPLE_COUNT)
-                        for _i x y in (enumerate (dim columns rows))
-                            if ((_i % THREAD_COUNT) == i)
-                                let w h =
-                                    (min ((x * TILE_SIZE) + TILE_SIZE) FB_WIDTH) - (x * TILE_SIZE)
-                                    (min ((y * TILE_SIZE) + TILE_SIZE) FB_HEIGHT) - (y * TILE_SIZE)
-                                render-rect (x * TILE_SIZE) (y * TILE_SIZE) w h iter rng
+                inline ceil (x)
+                    let f = (floor x)
+                    if (f < x)
+                        f + 1.0
+                    else
+                        f
 
-                    end-time := (bottle.time.get-time)
-                    print "thread" i "done in" (end-time - start-time) "seconds"
-                    null as voidstar
-                null
-        va-range THREAD_COUNT
+                let TILE_SIZE = 16
+                let rows = ((ceil (FB_HEIGHT / TILE_SIZE)) as u32)
+                let columns = ((ceil (FB_WIDTH / TILE_SIZE)) as u32)
+                using import itertools
+                for iter in (range RT_SAMPLE_COUNT)
+                    for _i x y in (enumerate (dim columns rows))
+                        if ((_i % thread-count) == i)
+                            let w h =
+                                (min ((x * TILE_SIZE) + TILE_SIZE) FB_WIDTH) - (x * TILE_SIZE)
+                                (min ((y * TILE_SIZE) + TILE_SIZE) FB_HEIGHT) - (y * TILE_SIZE)
+                            render-rect (x * TILE_SIZE) (y * TILE_SIZE) w h iter rng
+
+                end-time := (bottle.time.get-time)
+                print "thread" i "done in" (end-time - start-time) "seconds"
+                0
+            "rt"
+            & (thread-data @ i)
+
     ;
 
 @@ 'on bottle.render
@@ -202,4 +209,9 @@ fn ()
     display.update (view color-buffer)
     ;
 
-bottle.run;
+static-if main-module?
+    bottle.run;
+else
+    fn main (argc argv)
+        bottle.run;
+        0

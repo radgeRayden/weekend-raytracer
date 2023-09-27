@@ -1,17 +1,11 @@
-vvv bind pthread
-do
-    let header = (include "pthread.h")
-    do
-        let t = header.typedef.pthread_t
-        let create = header.extern.pthread_create
-        locals;
-run-stage;
+import sdl
 
-fn... spawn (closure : (pointer (function voidstar voidstar)), user-arg)
-    local thread : pthread.t
-    let status =
-        pthread.create &thread null closure user-arg
+fn... spawn (closure : (pointer (function i32 voidstar)), name, data)
+    sdl.CreateThread closure name data
+
+fn get-core-count ()
+    sdl.GetCPUCount;
 
 do
-    let spawn
+    let spawn get-core-count
     locals;
