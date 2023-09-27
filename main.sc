@@ -153,6 +153,7 @@ fn (cfg)
 struct ThreadData plain
     thread-count : i32
     thread-index : i32
+    done? : bool
 
 global thread-data : (Array ThreadData)
 
@@ -164,13 +165,15 @@ fn ()
 
     start-time = (bottle.time.get-time)
     thread-count := (threads.get-core-count)
+    # we need the pointers to be stable, so if any resizing is to happen, do it now
+    'reserve thread-data thread-count
 
     # dispatch work
     for i in (range thread-count)
-        'append thread-data (ThreadData thread-count i)
+        'append thread-data (ThreadData thread-count i false)
         threads.spawn
             fn (userdata)
-                data := copy (@ (userdata as (@ ThreadData)))
+                data := (@ (userdata as (mutable@ ThreadData)))
                 thread-count := data.thread-count
                 i := data.thread-index
 
@@ -198,11 +201,22 @@ fn ()
 
                 end-time := (bottle.time.get-time)
                 print "thread" i "done in" (end-time - start-time) "seconds"
+                data.done? = true
                 0
             "rt"
             & (thread-data @ i)
 
     ;
+
+global all-done? : bool
+@@ 'on bottle.update
+fn (dt)
+    if (not all-done?)
+        for data in thread-data
+            if (not data.done?)
+                return;
+        print "all done!"
+        all-done? = true
 
 @@ 'on bottle.render
 fn ()
